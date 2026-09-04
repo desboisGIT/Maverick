@@ -1,6 +1,6 @@
 # Maverick: architecture and feasibility study (phase 1)
 
-Status: draft for review, written 2026-11-10 and revised the same day with the owner's answers (section 10). No implementation yet.
+Status: draft for review, written 2026-11-10 and revised on 2026-11-10 and 2026-11-11 with the owner's answers (section 10). Simulation and demo plan: [simulation-plan.md](simulation-plan.md). No implementation yet.
 
 **How claims are labelled**
 
@@ -31,15 +31,15 @@ Facts about the host machine come from this machine on 2026-11-10: Ubuntu 26.04.
    - Deterministic robotics code carries the skills out: VIO/SLAM, a voxel map, frontier exploration and a trajectory planner.
    - PX4 handles attitude and position control and the failsafes.
 4. **Safety rule: the Wi-Fi link and the GPU host are optional for safe flight.**
-   - Everything needed to hold position or land runs on the drone: the flight controller and a small onboard companion computer.
-   - So the real drone needs onboard state estimation. That one decision drives the hardware budget (section 7).
+   - Everything needed to hold position or land runs on the flight controller itself: PX4 holds position on an optical-flow sensor and a rangefinder, and its offboard-loss failsafe holds then lands when the host goes quiet.
+   - Everything else is offboard, including VIO and obstacle checks (owner decision, section 10). The drone carries only the flight controller, its sensors and a small bridge board that streams camera and microphone data over Wi-Fi. No AI runs on the drone.
 5. **Keep the model count small:** five to six models (table below). Each extra model costs VRAM, latency and integration work.
    - Cloud models are allowed. Use them as a pressure valve: whatever doesn't fit in 16 GB of VRAM (most likely the VLM) moves to the cloud, behind the same interface as the local version.
-   - Anything that must keep working without the network (hover, land, the "stop" voice command) never depends on the cloud.
+   - Anything that must keep working without the network (hover, land) never depends on the cloud.
 6. **The drone must hear its operator through its own microphone.** Propeller noise makes this the hardest perception problem in the project [H]. It gets its own design (section 2.7), its own test (V1) and its own experiment (X8).
 7. **Maverick must work in any flat, not just the owner's.** The drone knows nothing about a home in advance: it explores, maps and works out the layout itself. Development and tests use randomly generated apartment layouts, with a strict split between layouts used for tuning and held-out layouts used to measure results (section 5). The owner's flat is just one more unseen test case.
-8. **€800 is enough for a DIY indoor drone, but not a turnkey research drone.**
-   - The cheapest integrated indoor-autonomy drone found, ModalAI Starling 2, is about $2,950 [F].
+8. **A DIY drone of about €400–650 is enough [E].** Because all computing is offboard, the drone needs only a frame, a PX4 flight controller, flow and range sensors, a camera, a mic array and a small bridge board (section 7).
+   - Integrated research drones such as ModalAI Starling 2 (about $2,950 [F]) carry onboard compute we don't need.
    - Don't buy hardware until the simulation and real-video perception milestones pass (decision gate G2 in section 4).
 
 **Proposed model set (initial picks, each to be benchmarked):**
@@ -50,7 +50,7 @@ Facts about the host machine come from this machine on 2026-11-10: Ubuntu 26.04.
 | Vision-language reasoning (scene questions, rooms, "is there bread?") | Qwen3.5-9B, natively multimodal [F] | Gemma 4 E4B (smaller) [F] or Qwen3-VL-8B [F] | Event-driven, 0.2–2 Hz |
 | Pointing and grounding ("what am I pointing at", precise object location) | Molmo 2 (4B/8B) [F] | Qwen3.5 grounding output | Event-driven |
 | Speech-to-text (English only), fed by the drone's microphone after noise suppression | Parakeet, English model [F] | Whisper large-v3-turbo [F] or Gemma 4 E2B/E4B native audio [F][H] | Streaming |
-| Onboard keyword spotting ("Maverick", "stop", "land") | Small keyword-spotting model on the companion [NV: pick in X8] | Push-to-talk on a phone, as a fallback | Always on |
+| Keyword spotting ("Maverick", "stop", "land") | Small keyword-spotting model on the host [NV: pick in X8] | Push-to-talk on a phone, as a fallback | Always on |
 | Speech enhancement (propeller noise removal) | Beamforming on a mic array, then a neural denoiser [H, see X8] | Cloud ASR that tolerates noise [H] | Streaming |
 | Text-to-speech | Kokoro-82M [F] | Piper [NV] | On demand |
 | Metric depth, only if the camera has no stereo depth | Depth Anything 3 metric [F] | Use the stereo sensor directly (preferred) | 10–30 Hz |
@@ -65,12 +65,12 @@ Person detection and pose for follow-me and pointing: start with an Ultralytics 
 | Assumption in the brief | Challenge | Recommendation |
 |---|---|---|
 | "Isaac Sim, because it's the best simulator" | Its minimum spec is a 16 GB GPU for the simulator alone [F]. Ours is 16 GB and must also host the models. 5070 Ti and Ubuntu 26.04 are not in the requirement tables [F]. Forum reports show Blackwell driver crashes on 5.1 [F]. | Gazebo Harmonic first. Isaac Sim later, for perception realism only, with the VLM moved to the cloud during those runs if VRAM runs out. |
-| "Offboard GPU inference over Wi-Fi" | Fine for semantics. Not acceptable for state estimation or collision avoidance. A Wi-Fi dropout in a hallway must not mean "no position estimate". | Onboard: PX4, VIO or optical flow, a short-horizon trajectory tracker and a link watchdog. Offboard: mapping, exploration, perception, agent. |
+| "Offboard GPU inference over Wi-Fi" | Fine for semantics. Not acceptable for state estimation or collision avoidance. A Wi-Fi dropout in a hallway must not mean "no position estimate". | Onboard: only PX4 with optical flow and a rangefinder, which can hold and land by itself, plus a small bridge board that streams sensors. Offboard: everything else, including VIO and obstacle checks (owner decision). When the link drops, the drone holds on flow and then lands. |
 | "Use many modern open-source models" | Each model costs VRAM, latency and failure modes. Several jobs (mapping, avoidance, following) are solved better by classical algorithms. | One VLM, one open-vocabulary detector, one pointing model, ASR, TTS. Classical SLAM, mapping and planning. |
-| "Voice commands to the drone" | Propeller noise makes onboard speech capture hard [H]. An external mic would be easier, but the owner requires the drone to hear them directly (section 10). | Onboard mic array with beamforming and denoising (section 2.7). "Stop" and "land" are recognised on the companion, so they work without Wi-Fi. A phone push-to-talk app is the fallback, not the main path. Measure feasibility early (X8). |
+| "Voice commands to the drone" | Propeller noise makes onboard speech capture hard [H]. An external mic would be easier, but the owner requires the drone to hear them directly (section 10). | Onboard mic array with beamforming and denoising (section 2.7). Keyword spotting runs on the host: during a link outage the drone already holds and lands, and the RC kill switch is the manual emergency stop. A phone push-to-talk app is the fallback, not the main path. Measure feasibility early (X8). |
 | "Read a clock" | VLMs are reported to be unreliable at reading analog clocks [H, see experiment X3]. | Have the drone approach for a close-up, then read. Test digital and analog separately. Report uncertainty. |
 | "Pondering whether to investigate further" | Unbounded LLM deliberation is slow and unsafe. | The executive computes the costs (remaining frontier area, battery, elapsed time, prior likelihood of the object in each room). The LLM makes a bounded go/no-go choice. Hard limits are enforced in code. |
-| "Budget-conscious drone" | Small indoor drones with onboard compute and depth sensing are payload-limited and short on flight time [E]. | Choose hardware after simulation, with a measured payload and compute list. |
+| "Budget-conscious drone" | Small indoor drones with onboard compute and depth sensing are payload-limited and short on flight time [E]. | Keep the drone light: no onboard compute beyond the flight controller and a small bridge board. Choose hardware after simulation, with a measured payload list. |
 | "Use OpenAI models" | Cloud calls add latency and cost. The owner accepts in-home video going to the cloud. | Local where the GPU can handle it, cloud wherever it relieves VRAM. Every model sits behind one interface, so local and cloud can be swapped by configuration. Nothing flight-critical uses the cloud. |
 | "Explore, map and understand the house" | Tuning on one known flat would overfit: the system would learn that flat, not how to understand flats. | No prior map or room list. Develop on randomly generated layouts and score only on held-out layouts the system has never seen (section 5). |
 
@@ -88,21 +88,23 @@ Person detection and pose for follow-me and pointing: start with an Ultralytics 
  to drone speaker │                              ▼                                        │
                   │  Semantic memory / scene graph ◄── Perception (YOLOE-26, VLM, Molmo)  │
                   │  (rooms, objects, timestamps)                                         │
+                  │  VIO / SLAM on camera + IMU ─► pose (also sent back to PX4)           │
                   │  Voxel/ESDF map (nvblox or OctoMap) ◄── depth + pose                  │
                   │  Exploration (frontiers) + global planner ─► waypoint/trajectory goals│
                   └───────────────▲──────────────────────────────┬────────────────────────┘
-               compressed images, │ Wi-Fi (Zenoh)                │ goals ≤ 2 Hz, heartbeats
+               compressed images, │ Wi-Fi (Zenoh)                │ setpoints, VIO pose
                   pose, mic audio │ lossy, variable latency      ▼
-                  ┌───────────────┴──────── ONBOARD COMPANION (Pi 5 / Orin class) ────────┐
-                  │ VIO (OpenVINS / VINS-Fusion) ─► PX4 external vision                   │
-                  │ Local trajectory tracker + simple depth-based stop/avoid              │
-                  │ Link watchdog: host lost ⇒ hover ⇒ land                               │
-                  │ Mic array ─► beamforming + denoise ─► keyword spotter (stop/land)     │
-                  │   └─► speech-gated audio stream to host ASR (local or cloud)          │
+                  ┌───────────────┴──────── ONBOARD BRIDGE (small Linux board, no AI) ────┐
+                  │ Camera (+ optional depth) ─► H.264 stream to the host                 │
+                  │ Mic array ─► speech-gated audio stream to the host                    │
+                  │ Relays PX4 telemetry up and host setpoints down                       │
+                  │ Drops setpoints older than 200 ms; no other logic                     │
                   └───────────────┬───────────────────────────────────────────────────────┘
                                   │ serial, uXRCE-DDS (not over Wi-Fi)
                   ┌───────────────▼──────── FLIGHT CONTROLLER (PX4) ──────────────────────┐
                   │ EKF2, rate/attitude/position control, geofence, offboard-loss failsafe│
+                  │ Optical flow + rangefinder ─► EKF2: holds position with no host       │
+                  │ Offboard-loss failsafe: host or link lost ⇒ hold ⇒ land               │
                   │ RC kill switch, battery failsafe                                      │
                   └───────────────────────────────────────────────────────────────────────┘
 ```
@@ -110,23 +112,27 @@ Person detection and pose for follow-me and pointing: start with an Ultralytics 
 | Loop | Where it runs | Rate [E] | Can depend on Wi-Fi? |
 |---|---|---|---|
 | Rate and attitude control | PX4 | ≥250 Hz | Never |
-| State estimation (EKF2 + VIO) | PX4 + companion | IMU ≥200 Hz, VIO 20–30 Hz | Never |
-| Trajectory tracking and emergency stop | Companion | 20–50 Hz | Never |
-| Keyword spotting ("stop", "land") | Companion | Always on | Never |
+| Position hold (EKF2 + optical flow + rangefinder) | PX4 | IMU ≥200 Hz, flow 20–50 Hz | Never |
+| Link-loss failsafe (hold, then land) | PX4 | Timeout about 0.5–1 s | Never |
+| VIO / SLAM pose, fused into EKF2 as external vision | Host | 20–30 Hz | Yes: EKF2 falls back to flow |
+| Trajectory setpoints and obstacle checks | Host | 10–50 Hz | Yes: link loss ⇒ PX4 holds, then lands |
+| Keyword spotting ("stop", "land") | Host | Always on | Yes: link loss ⇒ PX4 holds, then lands |
 | Mapping (voxels/ESDF) | Host | 5–30 Hz | Yes: degraded mode is "hold" |
 | Exploration and global planning | Host | 1–5 Hz | Yes |
 | Detection (YOLOE-26) | Host | 10–30 Hz | Yes |
 | VLM / pointing | Host | Event-driven, ≤2 Hz | Yes |
 | Agent / LLM | Host (or cloud) | Seconds per decision | Yes |
-| Full speech recognition (ASR) | Host (or cloud) | Streaming | Yes: offline, only the onboard keywords work |
+| Full speech recognition (ASR) | Host (or cloud) | Streaming | Yes |
 
 ### 2.2 Interfaces
 
-- **PX4 ↔ companion:** uXRCE-DDS over serial, using PX4's ROS 2 interface [F: PX4 docs]. Offboard mode needs setpoints or `OffboardControlMode` heartbeats above 2 Hz [F].
-- **Companion ↔ host:** ROS 2 over `rmw_zenoh`.
+- **PX4 ↔ bridge:** uXRCE-DDS over serial, using PX4's ROS 2 interface [F: PX4 docs]. Offboard mode needs setpoints or `OffboardControlMode` heartbeats above 2 Hz [F].
+- **Bridge ↔ host:** ROS 2 over `rmw_zenoh`. The bridge only forwards; it runs no planning or perception.
   - Zenoh is designed for lossy wireless links, PX4 v1.17 has Zenoh compatibility work [F], and Arm publishes Zenoh-over-Wi-Fi tuning guidance [F].
   - Compress images (JPEG for perception frames, H.264 for the monitoring stream).
   - In one study, raw images took 1401 ms round trip versus 38 ms with H.264 [F]. That was a cloud setup, so treat it as indicative only.
+  - VIO now runs on the host, so camera frames and PX4's IMU data must be time-stamped on the drone and synchronised on the host [H: accuracy to be measured in X6]. EKF2 can compensate for a fixed vision delay (`EKF2_EV_DELAY`) [NV]; jitter is the harder part.
+  - Video bandwidth: a 720p H.264 stream needs a few Mbit/s [E], so the bridge needs a hardware video encoder and preferably 5 GHz Wi-Fi [NV: check the chosen board].
   - Audio goes up only while voice activity is detected, as a compressed stream (for example Opus [NV]), a few tens of kbit/s [E].
 - **Host internal:** ROS 2 Jazzy nodes. Each model runs as its own inference server (for example vLLM or llama.cpp for the VLM), wrapped by a thin ROS 2 node.
   - Each role (VLM, ASR, TTS, reasoning) has one interface with a local and a cloud backend, chosen by configuration. Moving a model to the cloud to free VRAM is a config change, not a code change.
@@ -163,30 +169,31 @@ No skill takes a prior map or a list of rooms. Places and objects are known only
 
 | Fault | Detection | Response | Owner |
 |---|---|---|---|
-| Wi-Fi drop < T1 (about 0.5 s) [E] | Companion heartbeat watchdog | Keep tracking the current short trajectory segment | Companion |
-| Wi-Fi drop > T1 | Watchdog | Stop and hover on VIO | Companion |
-| Wi-Fi drop > T2 (about 10 s) [E] | Watchdog | Land in place (optionally return along the known safe path, later) | Companion → PX4 |
-| Companion crash or freeze | PX4 offboard-loss timeout `COM_OF_LOSS_T` [F] | `COM_OBL_RC_ACT` / `COM_OBL_ACT`, set to Land [F] | PX4 |
-| VIO divergence or loss | VIO covariance, EKF2 innovation checks | Altitude-hold on flow/range, then land [H: check the PX4 behaviour] | PX4 + companion |
-| GPU host crash or model hang | Host-side heartbeat, executive timeouts | Same as Wi-Fi drop | Companion |
+| Wi-Fi drop shorter than the timeout (about 0.5 s) [E] | None needed | PX4 keeps flying to the last position setpoint, which is at most a short hop away | PX4 |
+| Wi-Fi drop longer than the timeout | PX4 offboard-loss timeout `COM_OF_LOSS_T` [F] | `COM_OBL_RC_ACT` / `COM_OBL_ACT`: hold position on flow + range, then land [F for the parameters; NV whether PX4 chains hold then land, otherwise set Land directly] | PX4 |
+| Bridge board crash or freeze | Same timeout: setpoints stop arriving | Same as a long Wi-Fi drop | PX4 |
+| Host VIO stale, lost or diverging | EKF2 innovation checks, vision data timeout | EKF2 falls back to flow + range; the host pauses the mission until VIO recovers [H: check the PX4 behaviour] | PX4 + host |
+| GPU host crash or model hang | Executive timeouts; if setpoints stop, the PX4 timeout | Host stops sending motion; PX4 holds, then lands | Host, then PX4 |
 | Low battery | PX4 battery failsafe | Land or return | PX4 |
 | Pilot intervention | RC transmitter switch | Kill or manual takeover, highest priority | PX4 |
 
-Rule: no setpoint from the host is sent straight to PX4. The companion relays it only if it is fresh, bounded (speed, acceleration, geofence) and collision-checked against the onboard depth image.
+Rule: the host is the only source of setpoints, so it checks each one before sending: bounded (speed, acceleration, geofence) and collision-checked against the latest depth data. The bridge drops any setpoint older than 200 ms, and PX4's own speed limits and geofence are the last layer. The host sends position setpoints as short hops and keeps indoor speed low (about 1 m/s [E]), so a stale command cannot carry the drone far before the failsafe triggers.
+
+Trade-off accepted by the owner: with no onboard computer, obstacle checks depend on the link. A latency spike means the drone flies on slightly old information; short hops and low speed bound the damage, and PX4's distance-sensor collision prevention may add a last check [NV: whether it applies in offboard mode].
 
 ### 2.6 Simulation topology (mirrors the real system)
 
 ```
 [container: sim]    Gazebo Harmonic + PX4 SITL (x500_depth or a custom small frame)
                     world = one randomly generated apartment per run (section 5)
-[container: drone]  "companion" nodes (VIO or ground-truth pose, watchdog, tracker, keyword spotter)
+[container: drone]  "bridge" nodes (sensor and audio streaming, setpoint relay, staleness drop)
                     simulated mic = recorded speech + recorded propeller noise, mixed by distance
         │  tc netem: latency, jitter, loss, outages  ← fault injection
-[container: host]   mapping, exploration, perception, agent, voice; GPU via NVIDIA Container Toolkit
+[container: host]   VIO/SLAM, mapping, exploration, perception, agent, voice; GPU via NVIDIA Container Toolkit
         │  optional: cloud model APIs
 ```
 
-Running the companion code in its own container from day one means the same code later runs on the real companion computer, and the Wi-Fi failsafes are tested in every CI run.
+Running the bridge code in its own container from day one means the same code later runs on the real bridge board, and the Wi-Fi failsafes are tested in every CI run.
 
 Gazebo does not simulate sound [NV], so the simulated microphone is a node that mixes a speech clip with propeller noise recorded from a real motor and propeller, scaled by the speaker's distance and the throttle. This is crude, so the real numbers come from X8.
 
@@ -194,12 +201,14 @@ Gazebo does not simulate sound [NV], so the simulated microphone is a node that 
 
 The owner requires the drone itself to hear commands. This is the riskiest perception requirement: the microphones sit centimetres from the propellers, and the operator may be several metres away [H].
 
-- **Hardware:** a small mic array (4 or more mics) on the companion, mounted as far from the propellers as the frame allows, with foam and vibration isolation [E].
+- **Hardware:** a small mic array (4 or more mics) wired to the bridge board, mounted as far from the propellers as the frame allows, with foam and vibration isolation [E].
 - **Pipeline:**
   1. Beamforming steers towards the speaker and suppresses noise from the propeller directions [H].
   2. A neural denoiser cleans the result [H].
-  3. An always-on keyword spotter on the companion recognises the wake word and the safety words "stop" and "land". Those work without Wi-Fi and go straight to the companion's safety logic.
-  4. After the wake word, speech is streamed to the host for full English ASR (Parakeet locally, or a cloud ASR if it copes better with noise).
+  3. An always-on keyword spotter on the host recognises the wake word and the safety words "stop" and "land", which go straight to the executive.
+  4. After the wake word, the same audio goes to full English ASR (Parakeet locally, or a cloud ASR if it copes better with noise).
+
+  Steps 1–4 all run on the host: the bridge only streams the raw multichannel audio. If the link drops, the drone holds and lands on its own, and the RC kill switch remains the manual emergency stop.
 - **Help from flight behaviour:** when the drone hears its wake word, it can stop and hover, which is quieter than manoeuvring, and turn towards the voice before listening to the rest of the command [H].
 - **Bonus:** the same mic array gives the direction of the voice, which `come_to` uses to find the speaker.
 - **Fallback:** a phone push-to-talk app, through the same ASR interface, for when onboard listening fails.
@@ -227,14 +236,14 @@ Whether this works at all is unknown. Experiment X8 measures it on a real motor 
 | Item | Options | Choice |
 |---|---|---|
 | ROS 2 distro | Jazzy (LTS, Ubuntu 24.04, supported to May 2029 [F, second source]) vs Lyrical (LTS, Ubuntu 26.04 Tier 1, May 2026; some packages such as slam_toolbox were late at launch [F]) | **Jazzy in containers**: the PX4, Gazebo Harmonic and nvblox ecosystem is validated there [F]. Revisit Lyrical in 2027. |
-| RMW over Wi-Fi | Default DDS vs `rmw_zenoh` | **Zenoh** for the companion ↔ host link; measure it (experiment X5) |
+| RMW over Wi-Fi | Default DDS vs `rmw_zenoh` | **Zenoh** for the bridge ↔ host link; measure it (experiment X5) |
 | Autopilot | PX4 vs ArduPilot | **PX4**: offboard ROS 2 interface, documented offboard failsafes [F], used by ModalAI VOXL [F]. ArduPilot not evaluated [NV]. |
 
 ### 3.3 Localisation, mapping, exploration
 
 | Need | Candidates | Evidence | Pick |
 |---|---|---|---|
-| VIO (onboard) | OpenVINS, VINS-Fusion, ORB-SLAM3 | One 2025 comparison: OpenVINS lost tracking under motion blur; VINS-Fusion better on short sequences [F]. No drone-plus-PX4 head-to-head found | **OpenVINS** first, VINS-Fusion as fallback. In sim, start with ground-truth pose and add VIO in phase 2 |
+| VIO (on the host, over Wi-Fi) | OpenVINS, VINS-Fusion, ORB-SLAM3 | One 2025 comparison: OpenVINS lost tracking under motion blur; VINS-Fusion better on short sequences [F]. No drone-plus-PX4 head-to-head found | **OpenVINS** first, VINS-Fusion as fallback. In sim, start with ground-truth pose and add VIO in phase 2 |
 | Global SLAM / loop closure | RTAB-Map | Mature graph SLAM, failed to initialise on some EuRoC sequences [F] | Optional, for relocalisation across sessions |
 | 3D map / costs | nvblox (GPU), OctoMap (CPU) | nvblox: Jazzy, x86 and Jetson, ESDF output [F] | **nvblox**, with OctoMap fallback if Blackwell or containers cause problems |
 | Exploration | FUEL, FALCON | FUEL is ROS 1; a ROS 2/PX4 port is documented in a forum post, release unconfirmed [F]. FALCON's code status is unclear [F] | **Start with a simple frontier planner** (our own, about 500 lines). Port FUEL only if coverage speed matters |
@@ -261,10 +270,11 @@ Whether this works at all is unknown. Experiment X8 measures it on a real motor 
 | Item | Option | Price [F unless marked] | Weight | Notes |
 |---|---|---|---|---|
 | Integrated dev drone | ModalAI Starling 2 | $2,949.99 | 280 g | VOXL 2, VIO tracking camera, ToF, PX4, 40+ min claimed |
-| Companion | Raspberry Pi 5 8 GB (+ Hailo) | about $80 (+ $70–110) | Light | About 9 W under load |
-| Companion | Jetson Orin Nano Super | $249 launch; one source says $399 since July 2026 | Heavier [E] | 15–25 W, CUDA, can run nvblox and VIO onboard |
+| Bridge board | Small Linux board with a hardware H.264 encoder and 5 GHz Wi-Fi (Raspberry Pi Zero 2 W / Radxa Zero 3W class) | [NV] | Light | Streams sensors only. Check encoder, Wi-Fi band and USB bandwidth before buying |
+| Fallback companion | Raspberry Pi 5 8 GB | about $80 | Light | Only if X6 shows offboard VIO over Wi-Fi is not good enough |
+| Camera | Wide-angle global-shutter RGB camera module | [NV] | Light | Enough for VIO and perception; depth comes from Depth Anything 3 on the host if there is no depth camera |
 | Depth camera | OAK-D Pro W | $499 / €568 | 91 g | Stereo with active IR; wide FOV helps VIO |
-| Depth camera | OAK-D Lite | About €198; discontinued at one retailer; Luxonis price change July 2026 | 61 g | Budget option |
+| Depth camera | OAK-D Lite | About €198; discontinued at one retailer; Luxonis price change July 2026 | 61 g | Optional upgrade: real depth for obstacle checks. Needs USB bandwidth on the bridge |
 | Flow + range | ARK Flow-class sensor | [NV] | Light | Big improvement over PX4 Vision stock sensors, per one owner report [F] |
 | Microphones | Small 4–6 mic USB or I²S array (ReSpeaker-class) | [NV] | Light [E] | Needed for onboard voice. Choose after X8 |
 | Speaker | Small speaker for spoken reports | [NV] | Light [E] | May be hard to hear over the propellers; reports can also go to a phone |
@@ -278,7 +288,7 @@ Durations assume about 10 hours a week [E]. Each phase ends at a measurable gate
 | Phase | Content | Exit milestone (measurable) |
 |---|---|---|
 | **P0 Environment** (1–2 weeks) | Install Docker + NVIDIA Container Toolkit. Containers: Ubuntu 24.04 + ROS 2 Jazzy + Gazebo Harmonic + PX4 v1.17 SITL. Repo skeleton, CI that runs headless sim | 20/20 scripted runs of take off → hover 10 s → land via ROS 2 offboard, with no manual steps |
-| **P1 Safety skeleton** (2 weeks) | Companion container: watchdog, setpoint gate, geofence. `tc netem` fault injection. PX4 failsafe params | Failsafe suite F1–F6 (section 5) passes 100% over 50 randomised runs. F7 and F8 join the suite in P4, once voice and cloud backends exist |
+| **P1 Safety skeleton** (2 weeks) | Bridge container: setpoint relay with staleness drop. Host setpoint checks and geofence. `tc netem` fault injection. PX4 failsafe params and flow-based position hold | Failsafe suite F1–F6 (section 5) passes 100% over 50 randomised runs. F7 and F8 join the suite in P4, once voice and cloud backends exist |
 | **P2 Map and move** (3–4 weeks) | Random apartment generator (section 5), tuning and held-out layout sets. Depth → nvblox/OctoMap. Global and local planner. Frontier exploration. Start with ground-truth pose, then switch to VIO | Capabilities 1, 6, 7 meet their thresholds |
 | **P3 Perception and memory** (3 weeks) | YOLOE-26 node, 3D object lifting, scene graph, room labelling (VLM on keyframes) | Capabilities 2, 5 meet their thresholds in sim |
 | **P4 Agent and voice** (3 weeks) | Skill API, behaviour-tree executive, VLM/LLM server with local and cloud backends, simulated noisy mic, keyword spotter, ASR/TTS, search budgeting | End-to-end: "explore a bit, find the kitchen, tell me if you see bread, come back" passes 8/10 seeded scenarios on held-out layouts, spoken through the simulated mic |
@@ -286,10 +296,10 @@ Durations assume about 10 hours a week [E]. Each phase ends at a measurable gate
 | **P5 People** (3 weeks) | Person detection and tracking, follow with offset, come-to-me, pointing (Molmo 2 + 3D ray cast) | Capabilities 3, 4, 10 |
 | **P6 Monitoring and photoreal** (3+ weeks) | Change detection, monitor skill, clock reading. Optional Isaac Sim 6.x + Gaussian splat of the apartment | Capabilities 8, 9, 11 |
 | **G2 Hardware decision** | Use measured compute, payload and link needs to choose the platform (section 7) | Written bill of materials within budget, reviewed |
-| **P7 Hardware bring-up** | Tethered or netted tests, VIO validation, onboard mic tests in flight, then supervised indoor flights | Failsafe suite repeated on hardware; capability 7 in a real room; V1 in flight |
+| **P7 Hardware bring-up** | Tethered or netted tests, offboard VIO over real Wi-Fi, onboard mic tests in flight, then supervised indoor flights | Failsafe suite repeated on hardware; capability 7 in a real room; V1 in flight |
 | **P8 Real homes** | First full missions in a home the system has never seen (the owner's flat counts as one) | Capabilities 1, 2 and 5 in a real flat, with no prior map |
 
-**Fastest path to a working simulation (vertical slice, about 3 weeks):** P0 → minimal P1 (watchdog only) → a "fly to the [object]" demo. Use ground-truth pose, Gazebo's depth camera, an OctoMap, straight-line A* to a goal, and the YOLOE-26 text prompt to pick the goal. This proves the full loop (voice or text → skill → planner → PX4) before investing in VIO, exploration or VLMs.
+**Fastest path to a working simulation (vertical slice, about 3 weeks):** P0 → minimal P1 (PX4 link-loss failsafe only) → a "fly to the [object]" demo. Use ground-truth pose, Gazebo's depth camera, an OctoMap, straight-line A* to a goal, and the YOLOE-26 text prompt to pick the goal. This proves the full loop (voice or text → skill → planner → PX4) before investing in VIO, exploration or VLMs.
 
 ---
 
@@ -326,13 +336,13 @@ Failsafe suite (run in CI on every change):
 
 | # | Injected fault | Pass condition |
 |---|---|---|
-| F1 | Link outage of 0.3, 2 and 15 s | Hover within 0.3 m drift for short outages; lands for long ones; never collides |
+| F1 | Link outage of 0.3, 2 and 15 s | Hover within 0.5 m drift on flow for short outages [E]; lands for long ones; never collides |
 | F2 | Latency 300 ms ± 200 ms, 20% packet loss | No stale setpoint executed (age >200 ms rejected); flight stays stable |
 | F3 | Kill the host GPU/agent process | Same as F1 |
-| F4 | Kill the companion process | PX4 offboard-loss failsafe lands within `COM_OF_LOSS_T` + margin |
-| F5 | VIO reset or divergence (injected pose jump) | Detected; switches to hold or land; no flyaway beyond 1 m |
-| F6 | Malicious or garbled agent output (out-of-geofence goal, NaN, 10 m/s) | Rejected by the setpoint gate; logged |
-| F7 | Spoken "stop" during a link outage | Companion stops and hovers within 1 s, with no host involved |
+| F4 | Kill the bridge process | PX4 offboard-loss failsafe lands within `COM_OF_LOSS_T` + margin |
+| F5 | VIO reset or divergence (injected pose jump) | Detected; EKF2 falls back to flow, host pauses; no flyaway beyond 1 m |
+| F6 | Malicious or garbled agent output (out-of-geofence goal, NaN, 10 m/s) | Rejected by the host setpoint checks or PX4 limits; logged |
+| F7 | Spoken "stop" while flying, link up | Drone stops and hovers within 1 s of the end of the word |
 | F8 | Cloud model timeout or error mid-mission | Skill returns a degraded result within its timeout; no stall, no unsafe action |
 
 ---
@@ -358,7 +368,7 @@ Order of offloading when VRAM runs out: first the VLM to the cloud (biggest sing
 
 CPU and RAM: PX4 SITL, Gazebo physics, ROS 2 and planners fit in 16 threads and 30 GB [E]. 30 GB is Isaac Sim's minimum alone [F], another point against running it alongside the full stack.
 
-Onboard (later): VIO plus a tracker plus the watchdog run on a Pi 5-class computer [E, see X6]. nvblox onboard would need an Orin-class board.
+Onboard: nothing beyond PX4 and the bridge board. VIO and SLAM run on the host CPU or GPU (about 1–2 CPU threads for OpenVINS [E]). If no depth camera is fitted, Depth Anything 3 metric adds about 1 GB of VRAM [E].
 
 ---
 
@@ -366,9 +376,9 @@ Onboard (later): VIO plus a tracker plus the watchdog run on a Pi 5-class comput
 
 | Tier | Approach | Rough cost [E] | Pros | Cons |
 |---|---|---|---|---|
-| A: DIY minimal (€600–900) | 3.5–5" ducted frame, PX4 flight controller (Pixhawk 6C Mini class), flow + range sensor, Pi 5 companion, OAK-D Lite/Pro W, mic array and small speaker, Wi-Fi 6 adapter, RC transmitter and receiver, 3–4 batteries, charger, spares | Within €800 if the OAK-D Lite is used | Cheap, you own the full stack | Integration effort, VIO tuning, short flight time [E], payload-limited |
-| B: DIY performance (€1,000–1,500) | Tier A with Orin Nano Super and OAK-D Pro W | Over €800 | Onboard mapping, more margin | Weight and power, 5" frame and noise indoors |
-| C: Integrated (≈€2,800+) | ModalAI Starling 2 ($2,949.99 [F]) | Well over budget | VIO, ToF and PX4 work out of the box; 280 g; 40+ min [F] | Price |
+| **A: Offboard minimal (recommended)** | 3.5–5" ducted frame, PX4 flight controller (Pixhawk 6C Mini class), flow + range sensor, GPS module (outdoor flights), RGB camera, bridge board, mic array, small speaker, RC transmitter and receiver, 3–4 batteries, charger, spares | €400–650 | Cheap and light; all intelligence upgradable on the PC | Depends on Wi-Fi quality; VIO latency over the link; monocular depth only |
+| B: A plus depth camera | Tier A with an OAK-D Lite | €600–850 | Real depth for obstacle checks and mapping | More weight and USB bandwidth on the bridge |
+| C: Integrated (≈€2,800+) | ModalAI Starling 2 ($2,949.99 [F]) | Not needed | Works out of the box | Pays for onboard compute we don't use |
 
 Non-negotiable for any tier: an RC transmitter with a kill switch, prop guards or ducts, and a safety net or a padded test space for first flights. EU/French drone rules for indoor private flight [NV]: check before flying.
 
@@ -386,10 +396,13 @@ Non-negotiable for any tier: an RC transmitter with a kill switch, prop guards o
 | VLM hallucination ("I see bread") | High / Medium | Detector + VLM agreement, close-up `inspect`, confidence in reports |
 | Clock reading accuracy | Medium / Low | Close-up approach; experiment X3 |
 | Gazebo-to-real perception gap | High / Medium | Gate G1 on real phone footage; later Isaac Gaussian splats |
-| Real Wi-Fi in the apartment (dead zones, interference) | Medium / High | Failsafes designed for it; X5 measures it |
+| Real Wi-Fi in the apartment (dead zones, interference) | Medium / High (higher now that VIO and obstacle checks are offboard) | PX4 hold-then-land failsafe; X5 measures it; a dedicated 5 GHz access point for the drone |
+| Offboard VIO too laggy or jittery over Wi-Fi | Medium / High | Flow + range fallback in EKF2; low speed; X6 measures it. If it fails, add a Pi 5 companion for VIO only (about €80) |
+| Camera and IMU time sync across the link | Medium / Medium | Time-stamp on the drone; X6 |
+| Optical flow on plain or dark floors | Medium / High | Flow sensor with its own illumination [NV]; low speed; land if flow quality drops [H] |
 | VIO on blank walls or in low light | Medium / High | Active-IR stereo (OAK-D Pro), flow + range fallback, slow speeds |
 | Short flight time, payload limits | High / Medium | Measure in sim; size the hardware at G2 |
-| Propeller noise breaks onboard voice | High / High (onboard hearing is now a requirement) | Mic array, beamforming, denoising, hover-to-listen, onboard safety keywords; measure early (X8); phone push-to-talk fallback |
+| Propeller noise breaks onboard voice | High / High (onboard hearing is now a requirement) | Mic array, beamforming, denoising, hover-to-listen, RC kill switch; measure early (X8); phone push-to-talk fallback |
 | Privacy of in-home video | n/a | The owner accepts cloud processing. Still send only the frames a skill needs, not a continuous stream |
 
 Open questions remaining:
@@ -408,7 +421,7 @@ Open questions remaining:
 | X3 | Clock reading accuracy versus distance and angle | Real and synthetic clocks; VLMs vs Molmo 2 vs a specialised pipeline (hand detection + geometry) | `read_clock` design |
 | X4 | Real VRAM, latency and throughput of the full model set on the 5070 Ti | Benchmark script, all models resident and on-demand | Model sizes and quantisation |
 | X5 | Wi-Fi link quality in the flat | Laptop at drone positions: RTT, jitter, loss, Zenoh image throughput | Failsafe timeouts, image rates |
-| X6 | Can a Pi 5 run OpenVINS in real time? | Run on EuRoC data and recorded OAK-D data | Companion choice |
+| X6 | Is VIO on the host good enough over Wi-Fi? | In sim with `tc netem` set to the latency and jitter measured in X5, then on recorded real data replayed over real Wi-Fi: compare position error and hold quality against flow alone | Whether the offboard design holds, or a Pi 5 companion is needed for VIO |
 | X7 | Is the LLM's search budgeting sensible? | 50 synthetic search states; compare against an oracle cost policy | How much autonomy to give the agent |
 | X8 | Can a mic on the drone hear the operator over its propellers? | Bench rig: one or more real motors and propellers at hover throttle, a mic array at candidate positions, English commands spoken at 1–4 m from several directions. Measure wake-word recall, false wakes and word error rate with and without beamforming and denoising, local vs cloud ASR. Also record the noise for the simulated mic | Mic placement, frame and propeller choice, whether hover-to-listen is needed, whether onboard voice is viable at all |
 
@@ -420,9 +433,11 @@ Open questions remaining:
 |---|---|---|
 | Command language | English only | English ASR and TTS models (Parakeet English, Kokoro) |
 | Cloud models for in-home imagery | Accepted, especially to relieve the GPU | Every model role has a local and a cloud backend; the VLM is the first to offload (section 6) |
-| Voice capture | The drone must hear the operator itself | Onboard mic array and keyword spotter (section 2.7), test V1, failsafe F7, experiment X8 |
+| Voice capture | The drone must hear the operator itself | Onboard mic array, host-side keyword spotter (section 2.7), test V1, failsafe F7, experiment X8 |
 | Known flat vs any flat | The drone must adapt to any home; it is not about knowing the owner's flat | No prior maps; random apartment generator with a held-out test set (section 5); real-world gate uses several homes |
 | 3D scan of the owner's flat | Acceptable | Used later as one held-out test case and an Isaac Sim twin, never for tuning |
+| Onboard compute (2026-11-11) | Only what's needed to fly; all computing offboard, no need for an expensive drone | No companion computer: PX4 holds and lands on flow + range, a small bridge board streams sensors, VIO and obstacle checks move to the host. Budget about €400–650 (section 7). X6 tests the risk |
+| Outdoor flight (2026-11-11) | In scope, assuming ideal conditions: no wind, bright daylight | GPS module added to the drone; outdoors relies on GPS + barometer rather than optical flow. Simulated as stage S6 of [simulation-plan.md](simulation-plan.md) (roof inspection). Wind and low light are later scenario options. Regulations to check before real outdoor flights [NV] |
 | Flat size and layout | Not needed: design for generic homes | Assume doorways ≥70 cm and normal ceiling heights; the generator covers the range |
 
 ---
