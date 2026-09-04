@@ -1,0 +1,43 @@
+# Maverick simulator stack (stage S0).
+#   docker compose -f docker/compose.yaml up -d --build sim
+#   docker compose -f docker/compose.yaml exec sim bash -lc "test -f /tmp/px4_ready && echo ready"
+# Gazebo GUI (host: Wayland + XWayland on :0):
+#   xhost +local:            # once per login session, allows the container to use X
+#   HEADLESS=0 docker compose -f docker/compose.yaml up sim
+name: maverick
+
+services:
+  sim:
+    image: maverick-sim:dev
+    build:
+      context: ..                      # repo root
+      dockerfile: docker/sim.Dockerfile
+    init: true                         # reap zombies, forward signals
+    stop_grace_period: 20s
+    shm_size: "1gb"
+    volumes:
+      - ..:/maverick                   # repo root, read-write (image user is uid 1000)
+      - /tmp/.X11-unix:/tmp/.X11-unix  # X11 socket for the Gazebo GUI
+    environment:
+      HEADLESS: "${HEADLESS:-1}"       # 1 = no Gazebo GUI, 0 = show it
+      DISPLAY: "${DISPLAY:-:0}"
+      QT_X11_NO_MITSHM: "1"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+      # ROS 2 inside the container. PX4 copies ROS_DOMAIN_ID into UXRCE_DDS_DOM_ID.
+      # Default DDS discovery is kept (works across the default bridge network and
+      # between processes in this container). To restrict to this machine, set
+      # ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST (not verified with the XRCE agent).
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-0}"
+      # PX4 parameter overrides (rcS applies every PX4_PARAM_<NAME> at startup).
+      # NAV_DLL_ACT=0: no ground-control-station datalink is required to arm. Maverick's
+      # link-loss safety is PX4's offboard-loss failsafe (COM_OBL_*, configured in stage S1).
+      PX4_PARAM_NAV_DLL_ACT: "0"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # default network (compose project bridge); network_mode: host is not used.
