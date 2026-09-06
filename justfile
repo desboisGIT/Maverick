@@ -67,3 +67,8 @@ test-unit:
 # Lint the repo in the sim container
 lint:
     {{compose}} --profile tools run --rm -T tools bash -lc "cd /maverick && ruff check ."
+
+# Randomised failsafe suite F1/F2/F3/F4/F6 (runs on the host, drives docker compose).
+# e.g. `just test-failsafe --runs-per-case 3 --seed 1`, `--cases F3,F4`
+test-failsafe *args:
+    PYTHONPATH=sim/referee python3 -m referee.failsafe {{args}}
