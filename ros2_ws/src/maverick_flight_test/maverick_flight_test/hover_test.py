@@ -22,7 +22,7 @@ from px4_msgs.msg import (
     VehicleStatus,
 )
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.utilities import remove_ros_args
 
 from maverick_flight_test.hover_mission import (
@@ -35,13 +35,19 @@ from maverick_flight_test.hover_mission import (
     Observation,
 )
 
-TICK_S = 0.1  # 10 Hz
+TICK_S = 0.1  # 10 Hz, direct mode
+BRIDGE_TICK_S = 0.05  # 20 Hz, --via bridge (the rate the host flight client streams at)
+
+# maverick_interfaces/FlightCommand values (kept here so direct mode needs no extra package).
+BRIDGE_COMMANDS = {CMD_ARM: 1, CMD_OFFBOARD: 3, CMD_LAND: 4}
 
 
 class HoverTestNode(Node):
-    def __init__(self, mission: HoverMission) -> None:
+    def __init__(self, mission: HoverMission, via: str = "direct") -> None:
         super().__init__("hover_test")
         self.mission = mission
+        self.via = via
+        self.bridge_status: dict | None = None
         # Defaults: topic names published by PX4 v1.17.0 SITL (see module docstring).
         topic = self.declare_parameter
         pos_topic = topic("local_position_topic", "/fmu/out/vehicle_local_position_v1").value
@@ -65,10 +71,38 @@ class HoverTestNode(Node):
         self.create_subscription(
             VehicleLandDetected, land_topic, self._on_land, qos_profile_sensor_data
         )
-        self._mode_pub = self.create_publisher(OffboardControlMode, mode_topic, 10)
-        self._sp_pub = self.create_publisher(TrajectorySetpoint, sp_topic, 10)
-        self._cmd_pub = self.create_publisher(VehicleCommand, cmd_topic, 10)
-        self.create_timer(TICK_S, self._tick)
+        if via == "bridge":
+            # Host side of the link: Maverick messages go to the bridge relay, never to /fmu/in.
+            from maverick_interfaces.msg import BridgeStatus, FlightCommand, FlightSetpoint
+
+            self._bridge_msgs = (FlightSetpoint, FlightCommand)
+            self._bsp_pub = self.create_publisher(
+                FlightSetpoint, "/maverick/flight/setpoint", qos_profile_sensor_data
+            )
+            self._bcmd_pub = self.create_publisher(
+                FlightCommand,
+                "/maverick/flight/command",
+                QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE),
+            )
+            self.create_subscription(
+                BridgeStatus, "/maverick/bridge/status", self._on_bridge_status,
+                qos_profile_sensor_data,
+            )
+            self.create_timer(BRIDGE_TICK_S, self._tick)
+        else:
+            self._mode_pub = self.create_publisher(OffboardControlMode, mode_topic, 10)
+            self._sp_pub = self.create_publisher(TrajectorySetpoint, sp_topic, 10)
+            self._cmd_pub = self.create_publisher(VehicleCommand, cmd_topic, 10)
+            self.create_timer(TICK_S, self._tick)
+
+    def _on_bridge_status(self, msg) -> None:
+        self.bridge_status = {
+            "setpoints_forwarded": int(msg.setpoints_forwarded),
+            "setpoints_dropped_stale": int(msg.setpoints_dropped_stale),
+            "setpoints_dropped_invalid": int(msg.setpoints_dropped_invalid),
+            "commands_forwarded": int(msg.commands_forwarded),
+            "commands_dropped_stale": int(msg.commands_dropped_stale),
+        }
 
     def _on_pos(self, msg: VehicleLocalPosition) -> None:
         self._pos = msg
@@ -97,7 +131,24 @@ class HoverTestNode(Node):
         action = self.mission.step(self._observe())
         self._execute(action)
 
+    def _execute_bridge(self, action: Action) -> None:
+        setpoint_t, command_t = self._bridge_msgs
+        if action.setpoint is not None:
+            sp = setpoint_t()
+            sp.stamp = self.get_clock().now().to_msg()
+            sp.position_ned = [float(v) for v in action.setpoint]
+            sp.yaw = 0.0
+            self._bsp_pub.publish(sp)
+        for name in action.commands:
+            cmd = command_t()
+            cmd.stamp = self.get_clock().now().to_msg()
+            cmd.command = BRIDGE_COMMANDS[name]
+            self._bcmd_pub.publish(cmd)
+
     def _execute(self, action: Action) -> None:
+        if self.via == "bridge":
+            self._execute_bridge(action)
+            return
         if action.setpoint is not None:
             mode = OffboardControlMode()
             mode.timestamp = self._now_us()
@@ -140,11 +191,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--altitude", type=float, default=2.0)
     parser.add_argument("--hover-seconds", type=float, default=10.0)
     parser.add_argument("--timeout", type=float, default=90.0)
+    parser.add_argument(
+        "--via", choices=["direct", "bridge"], default="direct",
+        help="direct: publish px4_msgs on /fmu/in; bridge: publish Maverick flight messages",
+    )
     args = parser.parse_args(args_in)
 
     mission = HoverMission(Config(args.altitude, args.hover_seconds, args.timeout))
     rclpy.init(args=argv)
-    node = HoverTestNode(mission)
+    node = HoverTestNode(mission, args.via)
     try:
         while rclpy.ok() and not mission.done:
             rclpy.spin_once(node, timeout_sec=TICK_S)
@@ -159,13 +214,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"result": "fail", "reason": "interrupted", "max_alt_error_m": 0.0,
                           "max_xy_drift_m": 0.0, "duration_s": 0.0}))
         return 1
-    print(json.dumps({
+    out = {
         "result": "pass" if v.passed else "fail",
         "reason": v.reason,
         "max_alt_error_m": round(v.max_alt_error_m, 3),
         "max_xy_drift_m": round(v.max_xy_drift_m, 3),
         "duration_s": round(v.duration_s, 1),
-    }))
+    }
+    if args.via == "bridge":
+        out["bridge_status"] = node.bridge_status
+    print(json.dumps(out))
     return 0 if v.passed else 1
 
 

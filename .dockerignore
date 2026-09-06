@@ -1,5 +1,7 @@
-# The sim image only COPYs two small files from docker/; the repo root is
+# The sim image only COPYs a few small files from docker/; the repo root is
 # bind-mounted at runtime, so keep the build context tiny.
 *
 !docker/sim-entrypoint.sh
 !docker/profile.d-maverick.sh
+!docker/bridge-entrypoint.sh
+!docker/host-entrypoint.sh

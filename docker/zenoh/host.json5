@@ -1,0 +1,31 @@
+// zenoh-bridge-ros2dds on the host PC. Mirror image of bridge.json5.
+{
+  plugins: {
+    ros2dds: {
+      domain: 0,
+      ros_automatic_discovery_range: "LOCALHOST",
+      allow: {
+        publishers: [
+          "/maverick/flight/setpoint",
+          "/maverick/flight/command",
+        ],
+        subscribers: [
+          "/maverick/bridge/status",
+          "/fmu/out/vehicle_local_position_v1",
+          "/fmu/out/vehicle_status_v1",
+          "/fmu/out/vehicle_land_detected",
+          "/fmu/out/vehicle_command_ack",
+        ],
+      },
+    },
+  },
+  mode: "client",
+  // bridge on the wifi network; keep retrying until it is up, also after an outage
+  connect: {
+    endpoints: ["tcp/10.231.2.3:7447"],
+    timeout_ms: -1,
+    exit_on_failure: false,
+    retry: { period_init_ms: 1000, period_max_ms: 4000, period_increase_factor: 2 },
+  },
+  scouting: { multicast: { enabled: false }, gossip: { enabled: false } },
+}

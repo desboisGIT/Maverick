@@ -10,10 +10,10 @@ Split the S0 single container into the real system's shape (drone ↔ bridge boa
 
 | # | Injected fault (randomised) | Pass condition |
 |---|---|---|
-| F1 | Wi-Fi outage of 0.2–0.4 s, 1–4 s, or 12–20 s while hovering | Short: keeps flying, drift ≤ 0.5 m. Medium: PX4 holds (drift ≤ 0.5 m), mission resumes after the link returns. Long: lands, disarms, never resumes on its own |
+| F1 | Wi-Fi outage of 0.2–0.4 s, 1–4 s, or 12–20 s while hovering | Short: no failsafe, deviation ≤ 0.5 m. Medium: PX4 starts landing, returns to offboard when setpoints resume, mission completes; altitude loss ≤ 1.2 m, horizontal deviation ≤ 0.5 m. Long: the host aborts the mission (gap > 5 s), the drone lands and disarms within 25 s of the outage start, and is never re-armed |
 | F2 | Latency 300 ± 200 ms and 20% loss for 10–30 s | No setpoint older than 200 ms reaches PX4 (bridge stats); no flyaway (≤ 0.5 m from the commanded hold point); hold or continue, never crash |
-| F3 | Kill the host flight process mid-hover | Same outcome as a long outage: hold, then land |
-| F4 | Kill the bridge relay process mid-hover | PX4 offboard-loss failsafe engages within `COM_OF_LOSS_T` + 0.5 s, then lands |
+| F3 | Kill the host flight process mid-hover | Same outcome as a long outage: lands and disarms within 25 s, never re-armed |
+| F4 | Kill the bridge relay process mid-hover | PX4 offboard-loss failsafe (Land, nav_state 18) engages within `COM_OF_LOSS_T` + 1.0 s (measured 1.0–1.4 s), then lands and disarms |
 | F6 | Bad goals sent to the host flight client: outside the geofence, NaN, a jump > 1 m, speed request > limit | Rejected by the host safety gate and logged; drone holds its last valid setpoint; nothing reaches PX4 |
 
 "Lands" means: vehicle_land_detected landed and disarmed, within 40 s of the failsafe engaging. All positions for scoring come from Gazebo ground truth, read only by the referee.
@@ -66,6 +66,7 @@ The host never publishes `/fmu/in/*`. Only the bridge does.
 
 ### Bridge relay rules (`maverick_bridge`)
 
+- Telemetry: the four `/fmu/out` topics are re-published by the relay from PX4's DDS domain (1) into the ROS domain (0) that the Zenoh bridge reads, because zenoh-bridge-ros2dds only routes topics published by ROS nodes and the XRCE agent's are not. The relay is therefore on both paths; if it dies, PX4 loses setpoints (failsafe) and the host loses telemetry (gap policy).
 - On each `FlightSetpoint`: drop it if older than 200 ms, stamped in the future by more than 50 ms, or containing NaN in the position. Otherwise publish `OffboardControlMode` (position) + `TrajectorySetpoint` to PX4 immediately.
 - Never publish anything on its own: no setpoint repetition, no heartbeat. If fresh setpoints stop arriving, PX4's offboard-loss failsafe must trigger. This is what makes link loss safe.
 - `FlightCommand`: same staleness rule (500 ms), translated to `VehicleCommand`.
@@ -73,10 +74,11 @@ The host never publishes `/fmu/in/*`. Only the bridge does.
 
 ### PX4 configuration: `sim/` drone model and airframe
 
+- World: optical flow needs a textured floor. On PX4's plain default world the EKF reports zero motion while ground truth shows the drone drifting away at > 1 m/s [F: measured]. S1 uses `sim/worlds/textured.sdf` (random floor tiles); every later world must have floor texture.
 - Model `maverick`: starts as PX4's `x500_flow` (x500 + optical flow + LW20 downward lidar, GPS off) [F: present in PX4 v1.17.0]. Camera comes in S3, GPS for outdoor worlds in S6.
 - Airframe file `sim/px4/airframes/4500_gz_maverick` (sources 4021_gz_x500_flow), installed into the PX4 rootfs. It carries Maverick's parameters with `param set-default`, which replaces the S0 `PX4_PARAM_*` workaround:
   - `NAV_DLL_ACT 0` (no ground station needed)
-  - Offboard loss: `COM_OF_LOSS_T` about 0.5 s, `COM_OBL_RC_ACT` and `COM_FAIL_ACT_T` chosen so that loss → hold → land after about 10 s [H: exact PX4 behaviour to be measured in S1]
+  - Offboard loss: `COM_OF_LOSS_T 0.5`, `COM_OBL_RC_ACT 4` (Land). Measured in S1 [F]: Hold is not available without GPS (it silently becomes Land), Position/Altitude take no action without RC (unsafe), and `COM_FAIL_ACT_T` has no effect on this path. So PX4's reaction to link loss is **land immediately, recoverable**: if setpoints resume during the descent, PX4 returns to offboard by itself. The planned "hold, then land after 10 s" is replaced by this. The host decides whether to resume (gap ≤ 5 s) or abort (§ host flight client)
   - Indoor limits: horizontal speed about 1 m/s [E], climb/descent limits, a local geofence if PX4 supports one without GPS [NV]
   - The values come from measurement, documented in the airframe file comments.
 
@@ -84,6 +86,7 @@ The host never publishes `/fmu/in/*`. Only the bridge does.
 
 - `SafetyGate` (pure Python): rejects NaN/inf, goals outside a configured box geofence, jumps > 1 m from the current setpoint, and enforces a maximum speed by stepping towards goals. Every rejection is logged with a reason.
 - Mission client node: streams setpoints at 20 Hz to the bridge, sends commands, re-engages offboard after a medium outage if the mission is still active, and never re-arms after a failsafe landing.
+- Link-gap policy: if telemetry from the bridge was missing for more than 5 s, the mission is aborted: the client stops streaming setpoints, sends LAND when the link returns, and never re-arms. Shorter gaps: keep streaming so PX4 resumes offboard.
 - Accepts goals on `/maverick/flight/goal` (the stand-in for the S4 executive), which is how F6 injects bad goals.
 
 ### Referee (`sim/referee`)

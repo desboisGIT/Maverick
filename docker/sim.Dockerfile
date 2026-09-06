@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# Maverick simulator image (stage S0): PX4 SITL + Gazebo Harmonic + ROS 2 Jazzy.
+# Maverick image (S0 simulator, S1 adds the link tooling), serves sim, bridge, host and referee.
+# PX4 SITL + Gazebo Harmonic + ROS 2 Jazzy.
 # Build:  docker compose -f docker/compose.yaml build sim
 #
 # ---------------------------------------------------------------------------
@@ -108,13 +109,35 @@ RUN mkdir -p /opt/px4_ws/src \
 RUN chown -R 1000:1000 ${PX4_DIR}/build/px4_sitl_default/rootfs \
     && mkdir -p /maverick && chown 1000:1000 /maverick
 
+# --- stage S1: link, netem, referee tooling ---------------------------------
+# zenoh-bridge-ros2dds 1.10.1: release of 2026-09-07, newest before the 2026-10-28 1.10.2
+#   https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds/releases (standalone x86_64 zip)
+# Docker CLI 27.5.1 static binary (referee fault injection via the mounted socket):
+#   https://download.docker.com/linux/static/stable/x86_64/
+# iproute2 + libcap2-bin: `tc netem`; tc gets cap_net_admin as a file capability because the
+#   image user (uid 1000) is not root and compose only adds the cap to the bounding set.
+# python3-gz-transport13 (Gazebo Harmonic Python bindings for ground truth) is already
+#   installed by PX4's ubuntu.sh.
+ARG ZENOH_ROS2DDS_VERSION=1.10.1
+ARG DOCKER_CLI_VERSION=27.5.1
+RUN apt-get update && apt-get install -y --no-install-recommends unzip iproute2 libcap2-bin \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL -o /tmp/zenoh.zip https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds/releases/download/${ZENOH_ROS2DDS_VERSION}/zenoh-plugin-ros2dds-${ZENOH_ROS2DDS_VERSION}-x86_64-unknown-linux-gnu-standalone.zip \
+    && unzip -o /tmp/zenoh.zip -d /usr/local/bin zenoh-bridge-ros2dds \
+    && chmod 0755 /usr/local/bin/zenoh-bridge-ros2dds && rm /tmp/zenoh.zip \
+    && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz \
+        | tar -xz -C /usr/local/bin --strip-components=1 docker/docker \
+    && setcap cap_net_admin+ep "$(readlink -f "$(command -v tc)")" \
+    && zenoh-bridge-ros2dds --version && docker --version
+
 # Lint tool for `just lint` (not in Ubuntu 24.04's archive at a useful version).
 RUN python3 -m pip install --no-cache-dir --break-system-packages ruff
 
 COPY docker/profile.d-maverick.sh /etc/profile.d/maverick.sh
-COPY docker/sim-entrypoint.sh /usr/local/bin/sim-entrypoint.sh
+COPY docker/sim-entrypoint.sh docker/bridge-entrypoint.sh docker/host-entrypoint.sh /usr/local/bin/
 RUN chmod 0644 /etc/profile.d/maverick.sh \
-    && chmod 0755 /usr/local/bin/sim-entrypoint.sh \
+    && chmod 0755 /usr/local/bin/sim-entrypoint.sh /usr/local/bin/bridge-entrypoint.sh \
+        /usr/local/bin/host-entrypoint.sh \
     && echo '[ -f /etc/profile.d/maverick.sh ] && . /etc/profile.d/maverick.sh' >> /etc/bash.bashrc
 
 USER 1000:1000

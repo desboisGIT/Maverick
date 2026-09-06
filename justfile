@@ -17,27 +17,40 @@ setup-check:
     [ -n "${DISPLAY:-}" ]; report DISPLAY $?
     exit "$rc"
 
-# Build the simulation image
+# Build the image (shared by sim, bridge, host and referee)
 build:
     {{compose}} build sim
 
-# Run the simulation in the foreground (gui=1 shows the Gazebo GUI)
+# Start the whole stack in the background (builds the ROS workspace first)
+up gui="0": ws-build
+    #!/usr/bin/env bash
+    if [ "{{gui}}" = "1" ]; then xhost +local:docker >/dev/null 2>&1 || true; fi
+    export DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+    HEADLESS=$(( 1 - {{gui}} )) {{compose}} up -d
+
+# Run the simulator in the foreground (gui=1 shows the Gazebo GUI); needs the bridge for XRCE
 sim gui="0":
     #!/usr/bin/env bash
     if [ "{{gui}}" = "1" ]; then xhost +local:docker >/dev/null 2>&1 || true; fi
+    HEADLESS=$(( 1 - {{gui}} )) {{compose}} up bridge host -d
     HEADLESS=$(( 1 - {{gui}} )) {{compose}} up sim
 
-# Stop and remove the simulation containers
+# Stop and remove the whole stack
 down:
-    {{compose}} down
+    {{compose}} down --timeout 10
 
-# Open a login shell in the running sim container
-shell:
-    {{compose}} exec sim bash -l
+# Open a login shell in a running service (sim, bridge, host or referee)
+shell service="sim":
+    {{compose}} exec {{service}} bash -l
 
-# Build the ROS 2 workspace inside the sim container
+# Apply a wifi link profile to bridge and host: lab, apartment, bad, outage or clear
+netem profile:
+    {{compose}} exec -T bridge bash /maverick/docker/netem/apply.sh {{profile}}
+    {{compose}} exec -T host bash /maverick/docker/netem/apply.sh {{profile}}
+
+# Build the ROS 2 workspace (uid 1000, into ros2_ws/build and install); works without a stack
 ws-build:
-    {{compose}} exec sim bash -lc "cd /maverick/ros2_ws && colcon build --symlink-install"
+    {{compose}} --profile tools run --rm -T tools bash -lc "cd /maverick/ros2_ws && colcon build --symlink-install"
 
 # Run one hover trial
 hover:
@@ -49,8 +62,8 @@ hover-trials n="20":
 
 # Run unit tests in the sim container
 test-unit:
-    {{compose}} run --rm --no-deps sim bash -lc "cd /maverick && python3 -m pytest"
+    {{compose}} --profile tools run --rm -T tools bash -lc "cd /maverick && python3 -m pytest"
 
 # Lint the repo in the sim container
 lint:
-    {{compose}} run --rm --no-deps sim bash -lc "cd /maverick && ruff check ."
+    {{compose}} --profile tools run --rm -T tools bash -lc "cd /maverick && ruff check ."

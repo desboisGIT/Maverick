@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+# @name Maverick indoor drone (Gazebo)
+# @type Quadrotor
+#
+# x500_flow (optical flow + LW20 downward rangefinder, GPS disabled) with
+# Maverick's parameters. Every value below was measured in SITL on PX4 v1.17.0;
+# see sim/px4/README.md for the runs behind each comment.
+
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=maverick}
+
+. ${R}etc/init.d-posix/airframes/4021_gz_x500_flow
+
+# No ground station in the loop (x500 default is 2 = Return, which needs GPS).
+param set-default NAV_DLL_ACT 0
+
+# --- Offboard-loss failsafe ------------------------------------------------
+# Measured: with COM_OF_LOSS_T 0.5 a 0.3 s setpoint gap does nothing; a gap of
+# 1 s or more triggers the failsafe (Land, nav_state 18) 1.0-1.4 s after the last
+# OffboardControlMode message.
+param set-default COM_OF_LOSS_T 0.5
+# Measured: Land (4). Hold (5) is NOT usable without GPS: it silently becomes
+# Land (nav_state 18), and `commander mode auto:loiter` is rejected. Position (0)
+# and Altitude (1) take no action at all without RC: PX4 stays in offboard on
+# stale setpoints with no failsafe, so they are unsafe. Land lowers the
+# vehicle at about 0.15-0.25 m/s from 2 m (about 14 s to disarm), keeps x/y
+# within 0.1 m, and PX4 returns to offboard by itself when setpoints resume.
+param set-default COM_OBL_RC_ACT 4
+# COM_FAIL_ACT_T (hold before a failsafe action) has NO effect on the offboard
+# loss fallback in v1.17.0: Land starts immediately. Left at its default.
+
+# --- Indoor motion limits --------------------------------------------------
+# Measured: a 4 m step goto peaks at 1.08 m/s with 0.15 m overshoot (default
+# limits, 12 m/s and 3 m/s2, reach 2.96 m/s with 0.73 m overshoot).
+param set-default MPC_XY_VEL_MAX 1.0
+param set-default MPC_ACC_HOR 1.5
+# Climb/descent limits, see sim/px4/README.md for the measured peaks.
+param set-default MPC_Z_VEL_MAX_UP 1.0
+param set-default MPC_Z_VEL_MAX_DN 0.7
+
+# --- Geofence --------------------------------------------------------------
+# Measured: GF_MAX_HOR_DIST 2 with GF_ACTION 2 did NOT trigger when the vehicle
+# flew 4 m away. PX4's geofence uses the global position, which does not exist
+# without GPS. GF_* stays disabled; the host safety gate is the geofence.

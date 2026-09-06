@@ -1,0 +1,29 @@
+// zenoh-bridge-ros2dds on the bridge board. Only the topics below cross the wifi link.
+// allow.publishers  = local DDS publishers whose data is sent out over Zenoh
+// allow.subscribers = local DDS subscribers fed from Zenoh
+// Everything else (all other /fmu/*, /rosout, services, actions, ...) is not routed.
+// Keep in sync with docs/s1-plan.md "Topics across the link" and host.json5.
+{
+  plugins: {
+    ros2dds: {
+      domain: 0,
+      ros_automatic_discovery_range: "LOCALHOST",
+      allow: {
+        publishers: [
+          "/maverick/bridge/status",
+          "/fmu/out/vehicle_local_position_v1",
+          "/fmu/out/vehicle_status_v1",
+          "/fmu/out/vehicle_land_detected",
+          "/fmu/out/vehicle_command_ack",
+        ],
+        subscribers: [
+          "/maverick/flight/setpoint",
+          "/maverick/flight/command",
+        ],
+      },
+    },
+  },
+  mode: "router",
+  listen: { endpoints: ["tcp/10.231.2.3:7447"] },  // wifi side only, not the drone network
+  scouting: { multicast: { enabled: false }, gossip: { enabled: false } },
+}

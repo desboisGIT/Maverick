@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>maverick_bridge</name>
+  <version>0.1.0</version>
+  <description>Bridge-board relay: validates host flight messages and forwards them to PX4.</description>
+  <maintainer email="maintainer@example.com">Maverick</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>px4_msgs</depend>
+  <depend>maverick_interfaces</depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
