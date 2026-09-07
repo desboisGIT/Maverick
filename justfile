@@ -72,3 +72,8 @@ lint:
 # e.g. `just test-failsafe --runs-per-case 3 --seed 1`, `--cases F3,F4`
 test-failsafe *args:
     PYTHONPATH=sim/referee python3 -m referee.failsafe {{args}}
+
+# Generate random apartment world(s) into sim/worlds/generated/, e.g. `just worldgen 7` or
+# `just worldgen 7 --count 5 --no-ceiling`
+worldgen seed="7" *args:
+    PYTHONPATH=sim/worldgen python3 -m worldgen --seed {{seed}} --out sim/worlds/generated {{args}}

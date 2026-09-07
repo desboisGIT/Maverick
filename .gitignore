@@ -9,3 +9,5 @@ __pycache__/
 # recordings and test outputs
 runs/
 *.mcap
+# generated apartment worlds
+sim/worlds/generated/
