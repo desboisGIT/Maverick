@@ -19,13 +19,26 @@
       },
     },
   },
-  mode: "client",
+  mode: "peer",  // peer (not client): a client opens only one of several endpoints; a peer opens both, giving TCP + UDP links
   // bridge on the wifi network; keep retrying until it is up, also after an outage
   connect: {
-    endpoints: ["tcp/10.231.2.3:7447"],
+    endpoints: ["tcp/10.231.2.3:7447?rel=1", "udp/10.231.2.3:7447?rel=0"],
     timeout_ms: -1,
     exit_on_failure: false,
     retry: { period_init_ms: 1000, period_max_ms: 4000, period_increase_factor: 2 },
+  },
+  transport: { unicast: { max_links: 2 } },
+  listen: { endpoints: ["tcp/127.0.0.1:0"] },  // peer must listen somewhere; loopback only
+  // Time-critical topics are best-effort end to end: Zenoh then sends them on the UDP link
+  // (no head-of-line blocking behind lost TCP segments) and stale ones are simply replaced.
+  qos: {
+    publication: [
+      {
+        messages: ["put"],
+        key_exprs: ["maverick/flight/setpoint"],
+        config: { reliability: "best_effort", congestion_control: "drop" },
+      },
+    ],
   },
   scouting: { multicast: { enabled: false }, gossip: { enabled: false } },
 }

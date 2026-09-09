@@ -24,6 +24,18 @@
     },
   },
   mode: "router",
-  listen: { endpoints: ["tcp/10.231.2.3:7447"] },  // wifi side only, not the drone network
+  listen: { endpoints: ["tcp/10.231.2.3:7447", "udp/10.231.2.3:7447"] },
+  transport: { unicast: { max_links: 2 } },  // wifi side only, not the drone network
+  // Time-critical topics are best-effort end to end: Zenoh then sends them on the UDP link
+  // (no head-of-line blocking behind lost TCP segments) and stale ones are simply replaced.
+  qos: {
+    publication: [
+      {
+        messages: ["put"],
+        key_exprs: ["fmu/out/vehicle_local_position_v1", "fmu/out/vehicle_status_v1", "fmu/out/vehicle_land_detected", "fmu/out/vehicle_command_ack"],
+        config: { reliability: "best_effort", congestion_control: "drop" },
+      },
+    ],
+  },
   scouting: { multicast: { enabled: false }, gossip: { enabled: false } },
 }
