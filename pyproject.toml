@@ -10,4 +10,4 @@ select = ["E", "F", "W", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["ros2_ws/src", "sim/referee", "sim/worldgen/tests"]
 python_files = ["test_*.py"]
-addopts = "-q"
+addopts = "-q --import-mode=importlib"
