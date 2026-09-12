@@ -345,6 +345,9 @@ class KinematicDrone:
         self.drift_sigma = drift_sigma
         self._rng = np.random.default_rng(seed)
         self.odometer = 0.0
+        self.sp: np.ndarray | None = None  # position setpoint (estimated frame)
+        self.tau = 0.15  # setpoint tracking time constant, s (about 0.15 m lag at 1 m/s)
+        self.max_track_error = 0.15  # m, PX4 tracking bound measured in S1
 
     @property
     def est(self) -> np.ndarray:
@@ -369,6 +372,32 @@ class KinematicDrone:
         step = self.vel * dt
         self.pos[:2] += step
         self.odometer += float(np.linalg.norm(step))
+        if self.drift_sigma:
+            self.drift += self._rng.normal(size=2) * self.drift_sigma * math.sqrt(dt)
+
+    def track(self, target_est: np.ndarray, speed: float, dt: float) -> None:
+        """Flight-client style goto: a position setpoint steps along the straight line to the
+        target at <= speed; the vehicle follows it with a first-order lag (time constant `tau`),
+        so the tracking error stays <= `max_track_error` and the vehicle never cuts a corner
+        (the setpoint only turns once the vehicle has arrived at the waypoint)."""
+        if self.sp is None:
+            self.sp = self.est[:2].copy()
+        delta = np.asarray(target_est[:2]) - self.sp
+        dist = float(np.linalg.norm(delta))
+        step = min(speed, self.vmax) * dt
+        self.sp = (
+            np.asarray(target_est[:2], float).copy()
+            if dist <= step
+            else self.sp + delta / dist * step
+        )
+        err = self.sp - self.est[:2]
+        move = err * (1.0 - math.exp(-dt / self.tau))
+        n = float(np.linalg.norm(self.sp - (self.est[:2] + move)))
+        if n > self.max_track_error:  # bounded tracking error
+            move = err - (err - move) / n * self.max_track_error
+        self.pos[:2] += move
+        self.vel = move / dt
+        self.odometer += float(np.linalg.norm(move))
         if self.drift_sigma:
             self.drift += self._rng.normal(size=2) * self.drift_sigma * math.sqrt(dt)
 

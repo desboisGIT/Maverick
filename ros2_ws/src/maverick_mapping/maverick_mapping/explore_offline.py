@@ -28,10 +28,8 @@ class ExploreConfig:
     res: float = 0.1
     altitude: float = 1.2
     max_range: float = 5.0
-    plan_band: tuple[float, float] = (
-        1.0,
-        1.5,
-    )  # obstacle band of the 2D map; spec flight band is (0.3, 2.0)
+    plan_band: tuple[float, float] | None = None  # obstacle band; default altitude +- 0.4 m
+    band_half: float = 0.4  # vertical clearance: furniture below altitude - 0.4 is overflown
     free_z: float | None = None  # if set, free cells need an observation near this height
     frame_dt: float = 0.3  # depth frame period (simulated s)
     sim_dt: float = 0.1
@@ -39,10 +37,11 @@ class ExploreConfig:
     scan_every_m: float = 4.0  # 360 degree yaw scan when this far from the last one
     cam_width: int = 80
     cam_height: int = 60
-    collision_radius: float = 0.25  # body radius for the collision count (planner uses 0.35)
-    near_miss_radius: float = 0.30  # also count entries inside this radius
-    body_half_height: float = 0.10
-    reactive_dist: float = 0.36  # map-based slow-down / sidestep distance to occupied cells
+    body_radius: float | None = None  # default from manifest drone_profile (x500 0.39, small 0.15)
+    near_miss_margin: float = 0.05  # also count entries inside body_radius + this
+    body_half_height: float = 0.12
+    arrive_radius: float = 0.1  # waypoint reached when the vehicle is this close
+    track_margin: float = 0.05  # extra inflation on top of body radius + res / 2
     drift_sigma: float = 0.0  # m / sqrt(s) random walk of the position estimate (optional)
     depth_noise: bool = True
     snapshot_period: float = 20.0
@@ -69,7 +68,14 @@ def run_exploration(scene: Scene, cfg: ExploreConfig | None = None) -> ExploreRe
     cfg = cfg or ExploreConfig()
     t0 = time.perf_counter()
     cfg.planner.altitude = cfg.altitude
+    prof = scene.manifest.get("drone_profile", "x500")
+    if cfg.body_radius is None:
+        cfg.body_radius = {"x500": 0.39, "small": 0.15}.get(prof, 0.39)
+    if cfg.plan_band is None:
+        cfg.plan_band = (cfg.altitude - cfg.band_half, cfg.altitude + cfg.band_half)
     cfg.planner.band = cfg.plan_band
+    cfg.planner.robot_radius = cfg.body_radius
+    cfg.planner.margin = cfg.res / 2 + cfg.track_margin  # voxel quantisation + tracking residual
     sx, sy, syaw = scene.spawn
     drone = KinematicDrone(
         (sx, sy, cfg.altitude), syaw, drift_sigma=cfg.drift_sigma, seed=cfg.seed + 1
@@ -129,7 +135,7 @@ def run_exploration(scene: Scene, cfg: ExploreConfig | None = None) -> ExploreRe
         st["t"] += cfg.sim_dt
         c = scene.horizontal_clearance(drone.pos, cfg.body_half_height)
         min_clear[0] = min(min_clear[0], c)
-        if c < cfg.collision_radius:
+        if c < cfg.body_radius:
             if not st["in_col"]:
                 st["collisions"] += 1
                 col_at.append(
@@ -145,7 +151,7 @@ def run_exploration(scene: Scene, cfg: ExploreConfig | None = None) -> ExploreRe
             st["in_col"] = True
         else:
             st["in_col"] = False
-        if c < cfg.near_miss_radius:
+        if c < cfg.body_radius + cfg.near_miss_margin:
             if not st["in_nm"]:
                 st["near_misses"] += 1
             st["in_nm"] = True
@@ -182,63 +188,30 @@ def run_exploration(scene: Scene, cfg: ExploreConfig | None = None) -> ExploreRe
             if abs(err[0]) < 0.05:
                 break
 
-    occ_xy = [np.zeros((0, 2))]
-
     def do_plan():
         grid, res, org = vmap.project_2d(band[0], band[1], free_z=cfg.free_z)
-        oi = np.argwhere(grid == 100)
-        occ_xy[0] = np.array(org) + (oi + 0.5) * res
         return planner.plan(grid, res, org, (drone.est[0], drone.est[1])), (grid, res, org)
 
     def fly(wps: list, last_plan_t: float):
-        """Fly the waypoint list; returns (arrived, new_plan or None)."""
+        """Fly the waypoint list like the flight client: straight setpoint segments at <= 1 m/s,
+        one waypoint at a time (the next segment starts once the vehicle is at the waypoint).
+        Returns (arrived, new_plan or None)."""
         queue = list(wps)
-        v_corner = 0.35
-        prev = np.array(drone.est[:2])
+        drone.sp = drone.est[:2].copy()
         while queue and st["t"] < cfg.budget:
             tgt = np.array(queue[0][:2])
             delta = tgt - drone.est[:2]
-            dist = float(np.linalg.norm(delta))
-            final = len(queue) == 1
-            if dist < (0.10 if final else 0.12):
-                prev = tgt
+            if float(np.linalg.norm(delta)) < cfg.arrive_radius:
                 queue.pop(0)
                 continue
-            seg = tgt - prev
-            seg_len = float(np.linalg.norm(seg))
-            if seg_len > 1e-6:  # pure pursuit on the planned segment keeps us off the door jambs
-                u = seg / seg_len
-                along = float(np.dot(drone.est[:2] - prev, u))
-                aim = prev + u * min(seg_len, max(along, 0.0) + 0.35)
-                delta_aim = aim - drone.est[:2]
-            else:
-                delta_aim = delta
-            heading = math.atan2(delta_aim[1], delta_aim[0])
+            dsp = tgt - drone.sp
+            heading = math.atan2(dsp[1], dsp[0]) if np.linalg.norm(dsp) > 1e-6 else drone.yaw
             e = (heading - drone.yaw + math.pi) % (2 * math.pi) - math.pi
             cap = drone.vmax * max(0.0, 1.0 - abs(e) / math.radians(50.0))
-            if final:
-                cap = min(cap, math.sqrt(2 * 0.6 * drone.accel * dist) + 0.03)
-            else:
-                nxt = np.array(queue[1][:2]) - tgt
-                turn = abs(math.atan2(nxt[1], nxt[0]) - heading)
-                turn = min(turn, 2 * math.pi - turn)
-                vc = v_corner + (drone.vmax - v_corner) * max(0.0, math.cos(turn))
-                cap = min(cap, math.sqrt(vc * vc + 2 * 0.6 * drone.accel * dist))
 
-            # reactive layer on the map: slow down and sidestep when close to mapped obstacles
-            aim_vec = delta_aim
-            if len(occ_xy[0]):
-                off = drone.est[:2] - occ_xy[0]
-                dd = np.hypot(off[:, 0], off[:, 1])
-                k = int(np.argmin(dd))
-                if dd[k] < cfg.reactive_dist:
-                    push = off[k] / max(dd[k], 1e-6) * (cfg.reactive_dist - dd[k]) * 4.0
-                    aim_vec = aim_vec / max(float(np.linalg.norm(aim_vec)), 1e-6) + push
-                    cap = min(cap, max(0.3, drone.vmax * (dd[k] - 0.25) / 0.2))
-
-            def mv(h=heading, c=cap, tg=drone.est[:2] + aim_vec):
+            def mv(h=heading, c=cap, tg=tgt):
                 drone.turn(h, cfg.sim_dt)
-                drone.move(np.array([tg[0], tg[1], 0.0]), c, cfg.sim_dt)
+                drone.track(tg, c, cfg.sim_dt)
 
             tick(mv)
             if st["t"] - last_plan_t >= cfg.replan_period:
@@ -250,6 +223,7 @@ def run_exploration(scene: Scene, cfg: ExploreConfig | None = None) -> ExploreRe
                 ):
                     return False, res
                 queue = list(res.waypoints)
+                drone.sp = drone.est[:2].copy()
                 last_plan_t = st["t"]
         return not queue, None
 
@@ -416,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     def make_cfg() -> ExploreConfig:
         return ExploreConfig(
             budget=a.budget, res=a.res, drift_sigma=0.0 if a.no_noise else a.drift,
-            depth_noise=not a.no_noise, plan_band=tuple(a.band),
+            depth_noise=not a.no_noise, plan_band=tuple(a.band) if a.band else None,
         )  # fmt: skip
 
     if a.batch <= 0:

@@ -19,13 +19,13 @@ _NB = [(-1, -1, _SQ2), (-1, 0, 1.0), (-1, 1, _SQ2), (0, -1, 1.0), (0, 1, 1.0),
 
 @dataclass
 class PlannerConfig:
-    robot_radius: float = 0.35
-    squeeze_radius: float = 0.30  # retried when nothing is reachable at robot_radius
-    margin: float = 0.0  # radius is measured to voxel centres: surface clearance >= radius - res/2
-    los_extra: float = 0.06  # extra clearance demanded of straight-line shortcuts
+    robot_radius: float = 0.39  # x500 circumscribed radius
+    squeeze_radius: float | None = None  # optional retry radius when nothing is reachable
+    margin: float = 0.10  # voxel quantisation (res / 2) + tracking residual
+    los_extra: float = 0.0  # extra clearance demanded of straight-line shortcuts
     unknown_radius: float = 0.3  # keep this far from cells never observed (walls may hide there)
-    soft_radius: float = 0.9  # cells closer than this to an obstacle cost more
-    soft_weight: float = 4.0
+    soft_width: float = 0.6  # clearance cost acts this far beyond the hard inflation
+    soft_weight: float = 6.0
     altitude: float = 1.2
     min_cluster: int = 3
     hysteresis: float = 1.5  # score bonus for staying on the previous goal
@@ -80,8 +80,12 @@ class PlanningGrid:
         hard = dilate(occ, (cfg.robot_radius + cfg.margin) / res)
         unk = grid == UNKNOWN
         blocked = hard | unk | dilate(unk, cfg.unknown_radius / res)
-        soft = dilate(occ, cfg.soft_radius / res) & ~hard
-        cost = 1.0 + cfg.soft_weight * soft
+        # graded clearance cost: grows towards obstacles so narrow passages are crossed centrally
+        r_hard = cfg.robot_radius + cfg.margin
+        levels = np.arange(r_hard + 0.1, r_hard + cfg.soft_width + 1e-9, 0.1)
+        cost = np.ones(grid.shape)
+        for rk in levels:
+            cost += (cfg.soft_weight / len(levels)) * dilate(occ, rk / res)
         los = dilate(occ, (cfg.robot_radius + cfg.margin + cfg.los_extra) / res) | blocked
         pg = PlanningGrid(blocked, los, cost, res, origin)
         if start_xy is not None:  # let the robot leave a spot that is slightly too close
@@ -287,7 +291,11 @@ class ExplorationPlanner:
         robot_xy: tuple[float, float],
     ) -> PlanResult:
         out = self._plan(grid, res, origin, robot_xy, self.cfg)
-        if out.status == "done" and out.reason == "no reachable frontier":
+        if (
+            self.cfg.squeeze_radius is not None
+            and out.status == "done"
+            and out.reason == "no reachable frontier"
+        ):
             tight = dataclasses.replace(
                 self.cfg, robot_radius=self.cfg.squeeze_radius, los_extra=0.0
             )
