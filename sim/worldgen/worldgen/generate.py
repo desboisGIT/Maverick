@@ -14,6 +14,7 @@ from .furniture import furnish
 from .manifest import build_manifest, world_name
 from .materials import PALETTES, jitter
 from .openings import make_openings
+from .profile import DEFAULT_PROFILE, PROFILES
 from .programme import make_programme
 from .sdf import LIGHTING, write_sdf
 from .walls import build_walls
@@ -47,21 +48,25 @@ def generate(
     ceiling: bool = True,
     low_texture: bool = False,
     lighting: str | None = None,
+    drone: str = DEFAULT_PROFILE,
 ) -> World:
+    if drone not in PROFILES:
+        raise ValueError(f"unknown drone profile {drone!r}")
+    prof = PROFILES[drone]
     if lighting is not None and lighting not in LIGHTING:
         raise ValueError(f"unknown lighting preset {lighting!r}")
     rng = random.Random(seed)
     for attempt in range(MAX_ATTEMPTS):
         if attempt % REDRAW_EVERY == 0:  # keep the programme for a few tries to avoid bias
-            prog = make_programme(rng)
+            prog = make_programme(rng, prof)
         plan = make_floorplan(rng, prog)
         if plan is None:
             continue
-        openings = make_openings(rng, plan.rooms, prog)
+        openings = make_openings(rng, plan.rooms, prog, prof)
         if openings is None:
             continue
         palette = rng.choice(PALETTES)
-        result = furnish(rng, plan, openings, palette)
+        result = furnish(rng, plan, openings, palette, prof)
         if result is not None:
             furniture, spawn = result
             break
@@ -111,6 +116,7 @@ def generate(
         ceiling_height,
         preset,
         palette.name,
+        prof.name,
         {"ceiling": ceiling, "low_texture": low_texture},
     )
     return World(name, sdf, manifest)

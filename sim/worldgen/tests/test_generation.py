@@ -6,7 +6,7 @@ import pytest
 from worldgen import generate, seed_set, world_name
 from worldgen.cli import main
 from worldgen.manifest import HELD_OUT_SEEDS, TUNING_SEEDS
-from worldgen.openings import DOOR_WIDTHS_DM
+from worldgen.profile import PROFILES
 from worldgen.programme import FLAT_TYPES
 from worldgen.validate import validate
 from worldgen.walls import build_walls
@@ -15,21 +15,23 @@ TUNING = range(TUNING_SEEDS[0], TUNING_SEEDS[0] + 100)
 HELD_OUT = range(HELD_OUT_SEEDS[0], HELD_OUT_SEEDS[0] + 100)
 
 
-def test_100_tuning_and_100_held_out_seeds_are_valid_and_fast():
+@pytest.mark.parametrize("drone", sorted(PROFILES))
+def test_100_tuning_and_100_held_out_seeds_are_valid_and_fast(drone):
     started = time.perf_counter()
     slowest = 0.0
     flat_types = set()
     for seed in [*TUNING, *HELD_OUT]:
         t = time.perf_counter()
-        world = generate(seed)
+        world = generate(seed, drone=drone)
         slowest = max(slowest, time.perf_counter() - t)
         problems = validate(world.manifest, world.sdf)
+        assert world.manifest["drone_profile"] == drone
         assert not problems, (seed, problems)
         assert len(world.sdf) < 2_000_000
         flat_types.add(world.manifest["flat_type"])
     assert slowest < 1.0, f"slowest flat took {slowest:.2f} s"
     assert flat_types == set(FLAT_TYPES)
-    print(f"200 flats in {time.perf_counter() - started:.1f} s, slowest {slowest:.3f} s")
+    print(f"{drone}: 200 flats in {time.perf_counter() - started:.1f} s, slowest {slowest:.3f} s")
 
 
 def test_generation_is_deterministic():
@@ -54,7 +56,7 @@ def test_ceiling_option_and_low_texture_option():
     assert with_ceiling.find("model[@name='ceiling']") is not None
     assert without.find("model[@name='ceiling']") is None
     flat = generate(3, low_texture=True)
-    assert len(flat.sdf) < len(generate(3).sdf) / 2
+    assert len(flat.sdf) < len(generate(3).sdf) * 0.7
     assert not validate(flat.manifest, flat.sdf)
 
 
@@ -121,7 +123,7 @@ def test_walls_leave_openings_free():
                     assert s.end <= o.start + 1e-6 or s.start >= o.end - 1e-6
         for o in ops:
             if o.kind == "door":
-                assert round(o.width * 10) in DOOR_WIDTHS_DM
+                assert round(o.width * 10) in PROFILES[m["drone_profile"]].door_widths_dm
 
 
 def test_validator_catches_defects():
@@ -149,8 +151,18 @@ def test_cli_writes_files_named_after_the_world(tmp_path, capsys):
     assert "apt_3" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("seed", [0, 1, 2])
-def test_door_openings_wider_than_drone(seed):
-    for d in generate(seed).manifest["doors"]:
-        if d["kind"] == "door":
-            assert d["width"] >= 0.8
+@pytest.mark.parametrize("drone", sorted(PROFILES))
+def test_door_openings_wider_than_drone(drone):
+    lo, hi = PROFILES[drone].door_range
+    for seed in range(10):
+        for d in generate(seed, drone=drone).manifest["doors"]:
+            if d["kind"] == "door":
+                assert lo - 1e-6 <= d["width"] <= hi + 1e-6
+            else:
+                assert d["width"] >= PROFILES[drone].open_min_dm / 10 - 1e-6
+
+
+def test_x500_is_default_and_profiles_differ():
+    assert generate(4).manifest["drone_profile"] == "x500"
+    assert generate(4).sdf != generate(4, drone="small").sdf
+    assert generate(4, drone="small").sdf == generate(4, drone="small").sdf

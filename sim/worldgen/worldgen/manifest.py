@@ -41,6 +41,7 @@ def build_manifest(
     ceiling_height: float,
     lighting: str,
     palette: str,
+    drone_profile: str,
     options: dict[str, Any],
 ) -> dict[str, Any]:
     return {
@@ -50,6 +51,7 @@ def build_manifest(
         "world": world_name(seed),
         "flat_type": flat_type,
         "palette": palette,
+        "drone_profile": drone_profile,
         "options": options,
         "footprint": [[_r(x), _r(y)] for x, y in plan.footprint],
         "ceiling_height": ceiling_height,

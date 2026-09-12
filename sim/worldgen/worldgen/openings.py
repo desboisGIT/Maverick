@@ -7,11 +7,10 @@ from dataclasses import dataclass
 
 from .floorplan import Room
 from .geometry import Rect, dm
+from .profile import DroneProfile
 from .programme import BEDROOMS, Programme
 
-DOOR_WIDTHS_DM = (8, 9, 10)
 MIN_MARGIN_DM = 2  # wall left on each side of an opening
-MIN_SHARED_DM = 12  # shortest shared wall that can carry an opening
 DOOR_HEIGHT = 2.05
 
 
@@ -65,7 +64,9 @@ def edge_allowed(a: str, b: str, has_hall: bool, has_bed: bool) -> bool:
     return True
 
 
-def make_openings(rng: random.Random, rooms: list[Room], prog: Programme) -> list[Opening] | None:
+def make_openings(
+    rng: random.Random, rooms: list[Room], prog: Programme, prof: DroneProfile
+) -> list[Opening] | None:
     has_hall = any(r.type == "hallway" for r in rooms)
     has_bed = BEDROOMS[prog.flat_type] > 0
     candidates = []  # (priority, tiebreak, i, j, wall)
@@ -73,7 +74,7 @@ def make_openings(rng: random.Random, rooms: list[Room], prog: Programme) -> lis
         for j in range(i + 1, len(rooms)):
             b = rooms[j]
             wall = shared_wall(a.rect, b.rect)
-            if wall is None or wall[3] - wall[2] < MIN_SHARED_DM:
+            if wall is None or wall[3] - wall[2] < prof.min_shared_dm:
                 continue
             if not edge_allowed(a.type, b.type, has_hall, has_bed):
                 continue
@@ -125,11 +126,11 @@ def make_openings(rng: random.Random, rooms: list[Room], prog: Programme) -> lis
     for n, (_, _, i, j, (orient, pos, lo, hi)) in enumerate(chosen):
         a, b = rooms[i], rooms[j]
         kitchen_living = {a.type, b.type} == {"kitchen", "living"}
-        if kitchen_living and prog.open_kitchen and hi - lo >= 16:
+        if kitchen_living and prog.open_kitchen and hi - lo >= prof.open_min_dm + 2 * MIN_MARGIN_DM:
             width = min(hi - lo - 2 * MIN_MARGIN_DM, 24)
             kind = "open"
         else:
-            width = rng.choice([w for w in DOOR_WIDTHS_DM if w + 2 * MIN_MARGIN_DM <= hi - lo])
+            width = rng.choice([w for w in prof.door_widths_dm if w + 2 * MIN_MARGIN_DM <= hi - lo])
             kind = "door"
         start = rng.randint(lo + MIN_MARGIN_DM, hi - MIN_MARGIN_DM - width)
         openings.append(

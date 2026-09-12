@@ -5,6 +5,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+from .profile import DroneProfile
+
 FLAT_TYPES = ("studio", "1-bed", "2-bed", "3-bed")
 _FLAT_WEIGHTS = (0.15, 0.30, 0.30, 0.25)
 BEDROOMS = {"studio": 0, "1-bed": 1, "2-bed": 2, "3-bed": 3}
@@ -41,45 +43,45 @@ class Programme:
         return sum(r.area for r in self.rooms)
 
 
-def _spec(rng: random.Random, kind: str, lo: float, hi: float) -> RoomSpec:
-    min_side, min_area, aspect = RULES[kind]
-    return RoomSpec(kind, round(rng.uniform(lo, hi), 1), min_side, min_area, aspect)
+def _spec(rng: random.Random, prof: DroneProfile, kind: str, lo: float, hi: float) -> RoomSpec:
+    _, min_area, aspect = RULES[kind]
+    return RoomSpec(kind, round(rng.uniform(lo, hi), 1), prof.min_sides[kind], min_area, aspect)
 
 
-def make_programme(rng: random.Random) -> Programme:
+def make_programme(rng: random.Random, prof: DroneProfile) -> Programme:
     flat = rng.choices(FLAT_TYPES, _FLAT_WEIGHTS)[0]
     living = kitchen = bath = None
     beds: list[RoomSpec] = []
     hall = office = None
     if flat == "studio":
-        living = _spec(rng, "living", 18, 26)
-        kitchen = _spec(rng, "kitchen", 6, 9)
-        bath = _spec(rng, "bathroom", 4, 5.5)
-        hall = _spec(rng, "hallway", 3, 4.5) if rng.random() < 0.4 else None
+        living = _spec(rng, prof, "living", 18, 26)
+        kitchen = _spec(rng, prof, "kitchen", 6, 9)
+        bath = _spec(rng, prof, "bathroom", 4, 5.5)
+        hall = _spec(rng, prof, "hallway", 3, 4.5) if rng.random() < 0.4 else None
     elif flat == "1-bed":
-        living = _spec(rng, "living", 16, 24)
-        kitchen = _spec(rng, "kitchen", 7, 10)
-        bath = _spec(rng, "bathroom", 4, 6)
-        beds = [_spec(rng, "bedroom", 10, 15)]
-        hall = _spec(rng, "hallway", 4, 7) if rng.random() < 0.7 else None
+        living = _spec(rng, prof, "living", 16, 24)
+        kitchen = _spec(rng, prof, "kitchen", 7, 10)
+        bath = _spec(rng, prof, "bathroom", 4, 6)
+        beds = [_spec(rng, prof, "bedroom", 10, 15)]
+        hall = _spec(rng, prof, "hallway", 4, 7) if rng.random() < 0.7 else None
     elif flat == "2-bed":
-        living = _spec(rng, "living", 18, 26)
-        kitchen = _spec(rng, "kitchen", 8, 12)
-        bath = _spec(rng, "bathroom", 4.5, 7)
-        beds = [_spec(rng, "bedroom", 11, 15), _spec(rng, "bedroom", 9, 13)]
-        hall = _spec(rng, "hallway", 4, 7) if rng.random() < 0.85 else None
-        office = _spec(rng, "office", 6, 9) if rng.random() < 0.25 else None
+        living = _spec(rng, prof, "living", 18, 26)
+        kitchen = _spec(rng, prof, "kitchen", 8, 12)
+        bath = _spec(rng, prof, "bathroom", 4.5, 7)
+        beds = [_spec(rng, prof, "bedroom", 11, 15), _spec(rng, prof, "bedroom", 9, 13)]
+        hall = _spec(rng, prof, "hallway", 4, 7) if rng.random() < 0.85 else None
+        office = _spec(rng, prof, "office", 6, 9) if rng.random() < 0.25 else None
     else:
-        living = _spec(rng, "living", 20, 30)
-        kitchen = _spec(rng, "kitchen", 9, 13)
-        bath = _spec(rng, "bathroom", 5, 7)
+        living = _spec(rng, prof, "living", 20, 30)
+        kitchen = _spec(rng, prof, "kitchen", 9, 13)
+        bath = _spec(rng, prof, "bathroom", 5, 7)
         beds = [
-            _spec(rng, "bedroom", 12, 16),
-            _spec(rng, "bedroom", 10, 14),
-            _spec(rng, "bedroom", 9, 12),
+            _spec(rng, prof, "bedroom", 12, 16),
+            _spec(rng, prof, "bedroom", 10, 14),
+            _spec(rng, prof, "bedroom", 9, 12),
         ]
-        hall = _spec(rng, "hallway", 6, 9)
-        office = _spec(rng, "office", 6, 9) if rng.random() < 0.25 else None
+        hall = _spec(rng, prof, "hallway", 6, 9)
+        office = _spec(rng, prof, "office", 6, 9) if rng.random() < 0.25 else None
 
     # Order: kitchen next to living, then a shuffle of the private rooms with the hallway
     # inserted near the living end. Neighbours in the list tend to become neighbours in space.

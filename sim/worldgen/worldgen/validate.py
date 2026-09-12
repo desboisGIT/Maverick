@@ -10,11 +10,11 @@ from .clearance import door_zones, entries_connected, entry_points
 from .floorplan import Room
 from .geometry import Rect, polygon_area, rect_in_polygon
 from .openings import Opening
+from .profile import PROFILES
 from .programme import BEDROOMS, RULES
 from .sdf import STRUCTURE_MODELS
 
 WALL_HALF = 0.05
-SPAWN_CLEARANCE = 1.0
 
 
 def _rooms(m: dict[str, Any]) -> list[Room]:
@@ -40,6 +40,7 @@ def _openings(m: dict[str, Any], rooms: dict[str, Room]) -> list[Opening]:
 
 def validate(m: dict[str, Any], sdf: str | None = None) -> list[str]:
     errs: list[str] = []
+    prof = PROFILES[m["drone_profile"]]
     rooms = _rooms(m)
     by_id = {r.id: r for r in rooms}
     foot = m["footprint"]
@@ -51,7 +52,7 @@ def validate(m: dict[str, Any], sdf: str | None = None) -> list[str]:
         for b in rooms[i + 1 :]:
             if a.rect.intersects(b.rect):
                 errs.append(f"{a.id} overlaps {b.id}")
-        min_side, min_area, _ = RULES[a.type]
+        min_side, (_, min_area, _) = prof.min_sides[a.type], RULES[a.type]
         if min(a.rect.w, a.rect.h) < min_side - 1e-6:
             errs.append(f"{a.id} side below {min_side}")
         if a.rect.area < min_area:
@@ -76,8 +77,13 @@ def validate(m: dict[str, Any], sdf: str | None = None) -> list[str]:
     graph: dict[str, list[str]] = {r.id: [] for r in rooms}
     for d in m["doors"]:
         a, b = d["rooms"]
-        if d["kind"] == "door" and not 0.8 - 1e-6 <= d["width"] <= 1.0 + 1e-6:
+        if (
+            d["kind"] == "door"
+            and not prof.door_range[0] - 1e-6 <= d["width"] <= prof.door_range[1] + 1e-6
+        ):
             errs.append(f"{d['id']} width {d['width']}")
+        if d["kind"] == "open" and d["width"] < prof.open_min_dm / 10 - 1e-6:
+            errs.append(f"{d['id']} open gap too narrow")
         if d["kind"] == "open" and {by_id[a].type, by_id[b].type} != {"kitchen", "living"}:
             errs.append(f"{d['id']} open gap not between kitchen and living")
         if not _touching(by_id[a].rect, by_id[b].rect):
@@ -121,7 +127,7 @@ def validate(m: dict[str, Any], sdf: str | None = None) -> list[str]:
                 errs.append(f"{f['id']} surface {s['name']} outside bbox")
         if f["class"] != "rug":
             solid.append(f)
-            if any(z.intersects(r) for z in door_zones(room, ops)):
+            if any(z.intersects(r) for z in door_zones(room, ops, prof)):
                 errs.append(f"{f['id']} blocks a door")
     for i, a in enumerate(solid):
         for b in solid[i + 1 :]:
@@ -129,14 +135,19 @@ def validate(m: dict[str, Any], sdf: str | None = None) -> list[str]:
                 errs.append(f"{a['id']} overlaps {b['id']}")
     for room in rooms:
         obstacles = [rects[f["id"]] for f in solid if f["room"] == room.id]
-        if not entries_connected(room.rect, obstacles, entry_points(room, ops)):
-            errs.append(f"{room.id} doors not connected by a 0.8 m corridor")
+        if not entries_connected(
+            room.rect, obstacles, entry_points(room, ops, prof), prof.corridor_radius
+        ):
+            errs.append(f"{room.id} doors not connected by a {prof.corridor} m corridor")
 
     # spawn
     sx, sy, sz, _ = spawn["pose"]
     sroom = by_id[spawn["room"]]
     zone = Rect(
-        sx - SPAWN_CLEARANCE, sy - SPAWN_CLEARANCE, sx + SPAWN_CLEARANCE, sy + SPAWN_CLEARANCE
+        sx - prof.spawn_clearance,
+        sy - prof.spawn_clearance,
+        sx + prof.spawn_clearance,
+        sy + prof.spawn_clearance,
     )
     if sroom.type not in ("living", "hallway"):
         errs.append("spawn not in living room or hallway")

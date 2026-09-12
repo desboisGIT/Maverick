@@ -11,6 +11,16 @@ just worldgen 7 --count 5 --no-ceiling      # five flats, no ceiling (top-down v
 PYTHONPATH=sim/worldgen python3 -m worldgen --seed 7 --out /tmp/w --lighting evening --low-texture
 ```
 
+Drone profile `--drone x500|small` (default `x500`, recorded as `drone_profile` in the manifest):
+
+| | x500 (circumscribed radius about 0.39 m) | small (3.5-5 inch) |
+|---|---|---|
+| door width | 1.1, 1.2, 1.3 m | 0.8, 0.9, 1.0 m |
+| open-plan gap | at least 1.4 m | at least 1.2 m |
+| corridor between furniture and door zones | 1.2 m, zones 1.0 m deep | 0.8 m, 0.8 m deep |
+| spawn clearance | 1.2 m | 1.0 m |
+| room minimum sides (living/kitchen/bath/bed/office/hall) | 3.4/2.4/2.2/2.8/2.4/1.5 m | 3.2/2.0/2.0/2.4/2.0/1.2 m |
+
 Options: `--no-ceiling`, `--low-texture` (plain single-colour floors, for the optical-flow risk
 test), `--lighting day|evening|lamp_only`. Options never change the layout for a seed.
 As a library: `from worldgen import generate; world = generate(7)` gives `world.sdf`,
@@ -35,7 +45,7 @@ All draws come from one `random.Random(seed)`; decor, floors and lighting use se
 sub-streams so options do not shift the layout.
 
 1. `programme.py`: flat type (studio, 1-bed, 2-bed, 3-bed), room list with target areas,
-   minimum side, minimum area and aspect limits per type (living 3.2 m, hallway 1.2 m, others 2.0-2.4 m),
+   minimum side, minimum area and aspect limits per type (per drone profile, see the table),
    room order so that list neighbours tend to be spatial neighbours.
 2. `floorplan.py`: rectangular or L-shaped footprint (two wings) sized to the programme, then a
    binary space partition: the ordered room list is cut recursively, along the longer side
@@ -44,11 +54,11 @@ sub-streams so options do not shift the layout.
 3. `openings.py`: candidate doors on shared walls (at least 1.2 m long), filtered by room-type rules
    (bathroom only off hallway or bedroom, no bedroom-bedroom doors, kitchen next to living).
    A randomised Kruskal spanning tree guarantees connectivity, plus up to two extra loops between
-   public rooms. Doors are 0.8, 0.9 or 1.0 m; an open kitchen gets a gap up to 2.4 m instead.
+   public rooms. Door widths come from the drone profile; an open kitchen gets a gap up to 2.4 m instead.
 4. `furniture.py`, `assets.py`: per-room recipes place assets from the data library with
-   rejection sampling: inside the room, clear of other furniture, clear of door zones (0.8 m deep),
-   and the doors of the room must stay connected by a 0.8 m corridor (`clearance.py`). A spawn
-   point with 1 m clear floor in all directions is searched after furnishing. If a required item
+   rejection sampling: inside the room, clear of other furniture, clear of door zones (profile depth),
+   and the doors of the room must stay connected by the profile's corridor (`clearance.py`). A spawn
+   point with the profile's clear floor in all directions is searched after furnishing. If a required item
    does not fit, the furniture stage or the whole plan is redrawn.
 5. `walls.py`, `floors.py`, `decor.py`, `sdf.py`: walls come from a decimetre grid (a wall exists
    where two cells have different owners), are merged into segments with door gaps cut out
@@ -62,7 +72,7 @@ Furniture ids are `<class>_<n>` and are also the SDF model names.
 ## Tests
 
 `pytest sim/worldgen/tests` (also part of the repo-wide `pytest`): 100 tuning plus 100 held-out
-seeds must all validate and each flat must generate in under 1 s; determinism; schema; asset
+seeds must all validate for both profiles and each flat must generate in under 1 s; determinism; schema; asset
 library consistency. Gazebo load check, in the tools container:
 `gz sdf -k sim/worlds/generated/apt_7.sdf` and
 `gz sim -s -r --iterations 500 sim/worlds/generated/apt_7.sdf`.

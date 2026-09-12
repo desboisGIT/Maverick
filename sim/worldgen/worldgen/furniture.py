@@ -12,10 +12,10 @@ from .floorplan import FloorPlan, Room
 from .geometry import Rect
 from .materials import RGB, Palette, furniture_colors
 from .openings import Opening
+from .profile import DroneProfile
 
 WALL_HALF = 0.05
 MARGIN = 0.01  # extra clearance between wall faces and furniture
-SPAWN_CLEARANCE = 1.0
 SIDES = ("W", "E", "S", "N")
 OPPOSITE = {"W": "E", "E": "W", "S": "N", "N": "S"}
 _SIDE_YAW = {"W": 0.0, "E": math.pi, "S": math.pi / 2, "N": -math.pi / 2}
@@ -59,9 +59,11 @@ def inner_rect(room: Room) -> Rect:
     return room.rect.inset(WALL_HALF + MARGIN)
 
 
-def find_spawn(rng: random.Random, plan: FloorPlan, placed: list[Placed]) -> Spawn | None:
+def find_spawn(
+    rng: random.Random, plan: FloorPlan, placed: list[Placed], prof: DroneProfile
+) -> Spawn | None:
     """A point with 1 m of clear floor around it, in the living room (or a wide hallway)."""
-    pad = SPAWN_CLEARANCE + 0.05
+    pad = prof.spawn_clearance + 0.05
     options: list[tuple[Room, list[tuple[float, float]], float]] = []
     for room in plan.rooms:
         if room.type not in ("living", "hallway"):
@@ -93,12 +95,13 @@ class Furnisher:
         plan: FloorPlan,
         openings: list[Opening],
         palette: Palette,
+        prof: DroneProfile,
     ) -> None:
-        self.rng, self.plan, self.palette = rng, plan, palette
+        self.rng, self.plan, self.palette, self.prof = rng, plan, palette, prof
         self.placed: list[Placed] = []
         self.counts: dict[str, int] = {}
-        self.zones = {r.id: door_zones(r, openings) for r in plan.rooms}
-        self.entries = {r.id: entry_points(r, openings) for r in plan.rooms}
+        self.zones = {r.id: door_zones(r, openings, prof) for r in plan.rooms}
+        self.entries = {r.id: entry_points(r, openings, prof) for r in plan.rooms}
         self.colors: dict[str, dict[str, RGB]] = {}
 
     # ---- primitives -------------------------------------------------------------------------
@@ -118,7 +121,9 @@ class Furnisher:
         others = [p.rect for p in self.placed if p.room == room.id and p.solid]
         if any(o.inset(-gap).intersects(rect) for o in others):
             return False
-        return entries_connected(room.rect, others + [rect], self.entries[room.id])
+        return entries_connected(
+            room.rect, others + [rect], self.entries[room.id], self.prof.corridor_radius
+        )
 
     def _add(
         self, room: Room, inst: Instance, x: float, y: float, yaw: float, side: str = ""
@@ -430,6 +435,7 @@ def furnish(
     plan: FloorPlan,
     openings: list[Opening],
     palette: Palette,
+    prof: DroneProfile,
     attempts: int = 25,
 ) -> tuple[list[Placed], Spawn] | None:
     kitchen = next(r for r in plan.rooms if r.type == "kitchen")
@@ -441,10 +447,10 @@ def furnish(
         elif living.rect.area >= 19 and rng.random() < 0.7:
             dining_room = living.id
         try:
-            placed = Furnisher(rng, plan, openings, palette).run(dining_room)
+            placed = Furnisher(rng, plan, openings, palette, prof).run(dining_room)
         except LayoutFailure:
             continue
-        spawn = find_spawn(rng, plan, placed)
+        spawn = find_spawn(rng, plan, placed, prof)
         if spawn is not None:
             return placed, spawn
     return None

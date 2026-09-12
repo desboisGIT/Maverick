@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from .generate import generate
+from .profile import DEFAULT_PROFILE, PROFILES
 from .sdf import LIGHTING
 from .validate import validate
 
@@ -18,13 +19,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-ceiling", action="store_true", help="omit the ceiling (top-down view)")
     ap.add_argument("--low-texture", action="store_true", help="plain single-colour floors")
     ap.add_argument("--lighting", choices=sorted(LIGHTING), help="override the seeded preset")
+    ap.add_argument(
+        "--drone", choices=sorted(PROFILES), default=DEFAULT_PROFILE, help="drone size profile"
+    )
     args = ap.parse_args(argv)
 
     args.out.mkdir(parents=True, exist_ok=True)
     status = 0
     for seed in range(args.seed, args.seed + args.count):
         world = generate(
-            seed, ceiling=not args.no_ceiling, low_texture=args.low_texture, lighting=args.lighting
+            seed,
+            ceiling=not args.no_ceiling,
+            low_texture=args.low_texture,
+            lighting=args.lighting,
+            drone=args.drone,
         )
         problems = validate(world.manifest, world.sdf)
         (args.out / f"{world.name}.sdf").write_text(world.sdf)

@@ -7,17 +7,15 @@ from collections import deque
 from .floorplan import Room
 from .geometry import Point, Rect
 from .openings import Opening
+from .profile import DroneProfile
 
-ZONE_DEPTH = 0.8  # free floor in front of every opening, per side
-ENTRY_DEPTH = 0.6
-CORRIDOR_RADIUS = 0.4  # half of the 0.8 m corridor the drone needs
 GRID = 0.2
 
 
-def _along_range(o: Opening) -> tuple[float, float]:
+def _along_range(o: Opening, prof: DroneProfile) -> tuple[float, float]:
     if o.kind == "open":  # only the middle metre of an open-plan gap must stay free
         mid = (o.start + o.end) / 2
-        return mid - 0.5, mid + 0.5
+        return mid - prof.open_zone_half, mid + prof.open_zone_half
     return o.start - 0.1, o.end + 0.1
 
 
@@ -28,37 +26,39 @@ def _side(room: Room, o: Opening) -> int:
     return 1 if abs(low_edge - o.pos) < 1e-6 else -1
 
 
-def door_zones(room: Room, openings: list[Opening]) -> list[Rect]:
+def door_zones(room: Room, openings: list[Opening], prof: DroneProfile) -> list[Rect]:
     zones = []
     for o in openings:
         if room.id not in o.rooms:
             continue
-        a, b = _along_range(o)
+        a, b = _along_range(o, prof)
         s = _side(room, o)
-        lo, hi = (o.pos, o.pos + ZONE_DEPTH) if s > 0 else (o.pos - ZONE_DEPTH, o.pos)
+        lo, hi = (o.pos, o.pos + prof.zone_depth) if s > 0 else (o.pos - prof.zone_depth, o.pos)
         zones.append(Rect(lo, a, hi, b) if o.orient == "v" else Rect(a, lo, b, hi))
     return zones
 
 
-def entry_points(room: Room, openings: list[Opening]) -> list[Point]:
+def entry_points(room: Room, openings: list[Opening], prof: DroneProfile) -> list[Point]:
     pts = []
     for o in openings:
         if room.id not in o.rooms:
             continue
         mid = (o.start + o.end) / 2
-        d = _side(room, o) * ENTRY_DEPTH
+        d = _side(room, o) * prof.entry_depth
         pts.append((o.pos + d, mid) if o.orient == "v" else (mid, o.pos + d))
     return pts
 
 
-def entries_connected(room: Rect, obstacles: list[Rect], entries: list[Point]) -> bool:
+def entries_connected(
+    room: Rect, obstacles: list[Rect], entries: list[Point], radius: float
+) -> bool:
     """All entry points reachable from each other with the corridor radius kept from obstacles."""
     if len(entries) < 2:
         return True
     nx, ny = max(1, round(room.w / GRID)), max(1, round(room.h / GRID))
     cw, ch = room.w / nx, room.h / ny
     blocked = [[False] * ny for _ in range(nx)]
-    r = CORRIDOR_RADIUS
+    r = radius
     for o in obstacles:
         i0 = max(0, int((o.x0 - r - room.x0) / cw - 0.5) - 1)
         i1 = min(nx, int((o.x1 + r - room.x0) / cw + 0.5) + 2)
