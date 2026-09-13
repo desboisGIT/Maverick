@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .classes import CLASSES
 from .decor import Lamp, Panel
 from .floorplan import FloorPlan
 from .floors import RoomFloor
@@ -13,7 +14,7 @@ from .openings import DOOR_HEIGHT, Opening
 from .walls import THICKNESS, WallSegment
 
 # Models that are not furniture; every other model in the world is a manifest furniture id.
-STRUCTURE_MODELS = ("ground_plane", "floor", "walls", "ceiling", "decor")
+STRUCTURE_MODELS = ("ground_plane", "floor", "walls", "doors", "ceiling", "windows", "decor")
 SKIRTING_H = 0.08
 
 
@@ -81,10 +82,18 @@ def collision(
     )
 
 
-def model(name: str, body: list[str], pose: str = "0 0 0 0 0 0") -> str:
+def label_plugin(cls: str) -> str:
+    """gz-sim 8 Label system: the segmentation camera reports this integer for the model."""
+    return (
+        '<plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">'
+        f"<label>{CLASSES[cls]}</label></plugin>"
+    )
+
+
+def model(name: str, body: list[str], cls: str, pose: str = "0 0 0 0 0 0") -> str:
     inner = "\n      ".join(body)
     return (
-        f'  <model name="{name}"><static>true</static><pose>{pose}</pose>\n'
+        f'  <model name="{name}"><static>true</static><pose>{pose}</pose>{label_plugin(cls)}\n'
         f'    <link name="l">\n      {inner}\n    </link>\n  </model>'
     )
 
@@ -101,12 +110,11 @@ def _floor_model(floors: list[RoomFloor]) -> str:
             )
         if not f.tiles:
             body.append(visual(f"{f.room}_flat", (cx, cy, 0.002), "box", (r.w, r.h, 0.004), f.base))
-    return model("floor", body)
+    return model("floor", body, "floor")
 
 
 def _wall_model(
     walls: list[WallSegment],
-    openings: list[Opening],
     wall_colors: dict[str, RGB],
     exterior: RGB,
     trim: RGB,
@@ -140,6 +148,12 @@ def _wall_model(
         cpos = (s.pos, mid, height / 2) if s.orient == "v" else (mid, s.pos, height / 2)
         csize = (THICKNESS, s.length, height) if s.orient == "v" else (s.length, THICKNESS, height)
         body.append(collision(f"c{i}", cpos, "box", csize))
+    return model("walls", body, "wall")
+
+
+def _door_model(openings: list[Opening], wall_colors: dict[str, RGB], height: float) -> str:
+    """Lintels above doors; the doorway itself is empty."""
+    body = []
     top = height - DOOR_HEIGHT
     for o in openings:
         if o.kind != "door":
@@ -151,7 +165,7 @@ def _wall_model(
         color = wall_colors[o.rooms[0]]
         body.append(visual(f"{o.id}_lintel", pos, "box", size, color))
         body.append(collision(f"{o.id}_lintel_c", pos, "box", size))
-    return model("walls", body)
+    return model("doors", body, "door")
 
 
 def _ceiling_model(
@@ -175,7 +189,7 @@ def _ceiling_model(
                 emissive=lamp_color,
             )
         )
-    return model("ceiling", body)
+    return model("ceiling", body, "ceiling")
 
 
 def _panel_box(p: Panel, along: float, z: float, sw: float, sh: float, lift: float):
@@ -185,18 +199,22 @@ def _panel_box(p: Panel, along: float, z: float, sw: float, sh: float, lift: flo
     return (along, c, z), (sw, 0.012, sh)
 
 
-def _decor_model(panels: list[Panel], trim: RGB, window_glow: RGB) -> str:
-    body = []
+def _panel_models(panels: list[Panel], trim: RGB, window_glow: RGB) -> list[str]:
+    bodies: dict[str, list[str]] = {"window": [], "decor": []}
     for i, p in enumerate(panels):
         window = p.kind == "window"
+        body = bodies["window" if window else "decor"]
         frame = 0.045 if window else 0.02
         pos, size = _panel_box(p, p.u, p.z, p.w + 2 * frame, p.h + 2 * frame, 0.0)
         body.append(visual(f"p{i}f", pos, "box", size, trim if window else (0.15, 0.12, 0.1)))
         pos, size = _panel_box(p, p.u, p.z, p.w, p.h, 0.004)
-        body.append(
-            visual(f"p{i}g", pos, "box", size, p.color, emissive=window_glow if window else None)
-        )
-    return model("decor", body)
+        glow = window_glow if window else None
+        body.append(visual(f"p{i}g", pos, "box", size, p.color, emissive=glow))
+    return [
+        model(name, bodies[cls], cls)
+        for name, cls in (("windows", "window"), ("decor", "decor"))
+        if bodies[cls]
+    ]
 
 
 def _furniture_model(p: Placed) -> str:
@@ -206,7 +224,7 @@ def _furniture_model(p: Placed) -> str:
         body.append(visual(f"v{i}", pos, part.shape, size, color, part.alpha))
         if part.collide:
             body.append(collision(f"c{i}", pos, part.shape, size))
-    return model(p.id, body, pose=f"{n(p.x)} {n(p.y)} 0 0 0 {n(p.yaw)}")
+    return model(p.id, body, p.cls, pose=f"{n(p.x)} {n(p.y)} 0 0 0 {n(p.yaw)}")
 
 
 def _lights(lamps: list[Lamp], height: float, light: Lighting) -> list[str]:
@@ -225,6 +243,7 @@ def _lights(lamps: list[Lamp], height: float, light: Lighting) -> list[str]:
 
 GROUND_PLANE = """  <model name="ground_plane">
     <static>true</static>
+    @LABEL@
     <link name="link">
       <collision name="collision">
         <geometry><plane><normal>0 0 1</normal><size>1 1</size></plane></geometry>
@@ -301,18 +320,19 @@ def write_sdf(
     ceiling: bool,
 ) -> str:
     light = LIGHTING[lighting]
-    parts = [HEADER.format(name=name, ambient=n(light.ambient)), GROUND_PLANE]
+    ground = GROUND_PLANE.replace("@LABEL@", label_plugin("floor"))
+    parts = [HEADER.format(name=name, ambient=n(light.ambient)), ground]
     parts.append(SUN.format(intensity=n(light.sun), color=rgb(light.sun_color)))
     parts += _lights(lamps, ceiling_height, light)
     parts.append(_floor_model(floors))
     parts.append(
-        _wall_model(
-            walls, openings, wall_colors, shade(palette.walls[0], 0.8), palette.trim, ceiling_height
-        )
+        _wall_model(walls, wall_colors, shade(palette.walls[0], 0.8), palette.trim, ceiling_height)
     )
+    if any(o.kind == "door" for o in openings):
+        parts.append(_door_model(openings, wall_colors, ceiling_height))
     if ceiling:
         parts.append(_ceiling_model(plan, ceiling_height, palette.ceiling, lamps, light.lamp_color))
-    parts.append(_decor_model(panels, palette.trim, light.window))
+    parts += _panel_models(panels, palette.trim, light.window)
     parts += [_furniture_model(p) for p in furniture]
     parts.append(FOOTER)
     return "\n".join(parts)

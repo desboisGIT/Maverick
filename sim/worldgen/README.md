@@ -39,6 +39,17 @@ Seed ranges: tuning 0-99 999, held-out 1 000 000-1 099 999 (`seed_set` in the ma
 - The world has no world-level `<plugin>` elements, like `textured.sdf`; PX4's server config
   supplies the systems.
 
+## Semantic labels
+
+Every model carries Gazebo's Label system, for the segmentation camera:
+`<plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>ID</label></plugin>`
+at model level. All instances of a class share one id. The table is in `worldgen/classes.py`
+and in the manifest as `classes` (0 = background). Structural classes: floor 1 (also the ground
+plane), wall 2, ceiling 3, door 4 (lintels), window 5, decor 6 (pictures). Furniture follows in
+fixed order from 7: kitchen_counter, fridge, oven, dining_table, chair, sofa, coffee_table, tv_unit,
+bed, nightstand, wardrobe, desk, office_chair, bathtub, shower, toilet, sink, shelves, plant,
+rug (26 in total). Never reorder; append only.
+
 ## Algorithm
 
 All draws come from one `random.Random(seed)`; decor, floors and lighting use separate

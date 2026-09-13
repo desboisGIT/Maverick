@@ -67,7 +67,7 @@ def test_world_name_and_structure():
     assert root.tag == "sdf" and root.find("world").get("name") == "apt_11"
     assert root.find("world/spherical_coordinates") is not None
     assert root.find("world/model[@name='ground_plane']") is not None
-    assert root.findall("world//plugin") == []  # systems come from PX4's server config
+    assert root.findall("world/plugin") == []  # systems come from PX4's server config
 
 
 def test_manifest_schema():
@@ -166,3 +166,32 @@ def test_x500_is_default_and_profiles_differ():
     assert generate(4).manifest["drone_profile"] == "x500"
     assert generate(4).sdf != generate(4, drone="small").sdf
     assert generate(4, drone="small").sdf == generate(4, drone="small").sdf
+
+
+def test_every_model_has_a_label_matching_the_class_table():
+    from worldgen.assets import ASSETS
+    from worldgen.classes import CLASSES, FURNITURE
+
+    assert set(FURNITURE) == set(ASSETS)
+    assert CLASSES["floor"] == 1 and len(set(CLASSES.values())) == len(CLASSES)
+    assert 0 not in CLASSES.values()
+    for seed in range(15):
+        world = generate(seed)
+        assert world.manifest["classes"] == CLASSES
+        by_id = {f["id"]: f["class"] for f in world.manifest["furniture"]}
+        structural = {
+            "ground_plane": "floor",
+            "floor": "floor",
+            "walls": "wall",
+            "doors": "door",
+            "ceiling": "ceiling",
+            "windows": "window",
+            "decor": "decor",
+        }
+        for m in ET.fromstring(world.sdf).find("world").findall("model"):
+            plugins = m.findall("plugin")
+            assert len(plugins) == 1, m.get("name")
+            assert plugins[0].get("filename") == "gz-sim-label-system"
+            assert plugins[0].get("name") == "gz::sim::systems::Label"
+            expected = structural.get(m.get("name")) or by_id[m.get("name")]
+            assert int(plugins[0].findtext("label")) == CLASSES[expected]

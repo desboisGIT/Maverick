@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .classes import CLASSES
 from .decor import Panel
 from .floorplan import FloorPlan
 from .furniture import Placed, Spawn
@@ -53,6 +54,7 @@ def build_manifest(
         "palette": palette,
         "drone_profile": drone_profile,
         "options": options,
+        "classes": dict(CLASSES),
         "footprint": [[_r(x), _r(y)] for x, y in plan.footprint],
         "ceiling_height": ceiling_height,
         "rooms": [
