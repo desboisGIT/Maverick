@@ -40,3 +40,17 @@ The drone explores an unseen generated apartment on its own, builds a 3D map, fi
 - **2D occupancy grid:** numpy `int8` array, `-1` unknown, `0` free, `100` occupied, with `resolution` (m) and `origin` (x, y of cell [0, 0]) in the map frame: ROS REP 103 ENU (x east, y north, z up, metres, right-handed; yaw counter-clockwise from +x). Conversion from PX4 local NED in one place: x_enu = y_ned, y_enu = x_ned, z_enu = -z_ned, yaw_enu = pi/2 - yaw_ned. Gazebo worlds and worldgen manifests are ENU too.
 - **Waypoints to the flight client:** goals on `/maverick/flight/goal` as in S1 (`goto` mode, ≤ 1 m/s).
 - **Gateway events (console):** JSON over a websocket, one envelope `{"type": ..., "t": ..., "data": ...}`, types: `pose`, `camera_frame` (JPEG base64 or a URL), `detections`, `map_update` (voxel blocks or a downsampled occupied-voxel list), `frontiers`, `path`, `rooms`, `objects`, `transcript`, `agent_step`, `skill_progress`, `status`. Agent G defines the exact schema in `console/src/gateway/types.ts` and a matching `docs/gateway-events.md`; the ROS gateway node follows it.
+
+## Integration contract (sensor path → host)
+
+The camera is part of the drone, so the sensor path mirrors hardware: Gazebo renders in the `sim` container ("the camera"), a small camera driver there sends frames to the `bridge` container over the `drone` network (standing in for the USB cable; plain length-prefixed TCP, no Gazebo transport and no ground truth on that network), and the bridge relay publishes them to the host through Zenoh.
+
+| Topic (host side) | Type | Rate | Notes |
+|---|---|---|---|
+| `/maverick/camera/rgb/compressed` | `sensor_msgs/CompressedImage` (JPEG) | 5 Hz | 640x480 |
+| `/maverick/camera/depth` | `sensor_msgs/Image` `16UC1` (mm, 0 = invalid) | 5 Hz | 160x120, same stamp as RGB |
+| `/maverick/camera/semantic` | `sensor_msgs/Image` `mono8` (worldgen class ids) | 5 Hz | 160x120, **simulation only**: feeds the simulated detector, does not exist on hardware |
+| `/maverick/camera/info` | `sensor_msgs/CameraInfo` | latched / 1 Hz | intrinsics for the 160x120 depth/semantic images; RGB intrinsics scale by 4 |
+| `/maverick/camera/pose` | `geometry_msgs/PoseStamped` | 5 Hz | camera optical-frame pose in the map frame (ENU), PX4 estimate at frame time, computed on the bridge from vehicle_local_position + vehicle_attitude + the fixed camera mount |
+
+All five carry the same `header.stamp` per frame (bridge wall clock at receipt). Frame ids: `map`, `camera_optical`. Host nodes: `mapping_node` (VoxelMap, frontiers, 2D grid), `memory_node` (simulated detector → SceneGraph), `explore` skill node (frontier exploration through `/maverick/flight/goal`), `gateway` (websocket per docs/gateway-events.md).
