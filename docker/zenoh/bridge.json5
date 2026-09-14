@@ -15,6 +15,11 @@
           "/fmu/out/vehicle_status_v1",
           "/fmu/out/vehicle_land_detected",
           "/fmu/out/vehicle_command_ack",
+          "/maverick/camera/rgb/compressed",
+          "/maverick/camera/depth",
+          "/maverick/camera/semantic",
+          "/maverick/camera/info",
+          "/maverick/camera/pose",
         ],
         subscribers: [
           "/maverick/flight/setpoint",
@@ -32,7 +37,7 @@
     publication: [
       {
         messages: ["put"],
-        key_exprs: ["fmu/out/vehicle_local_position_v1", "fmu/out/vehicle_status_v1", "fmu/out/vehicle_land_detected", "fmu/out/vehicle_command_ack"],
+        key_exprs: ["fmu/out/vehicle_local_position_v1", "fmu/out/vehicle_status_v1", "fmu/out/vehicle_land_detected", "fmu/out/vehicle_command_ack", "maverick/camera/**"],
         config: { reliability: "best_effort", congestion_control: "drop" },
       },
     ],

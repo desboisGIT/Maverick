@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Maverick sim container entrypoint.
-#   no args      : PX4 SITL + Gazebo Harmonic (the XRCE agent runs in the bridge container)
+#   no args      : PX4 SITL + Gazebo Harmonic (the XRCE agent runs in the bridge container), then the
+#                  camera driver (CAMERA_DRIVER=0 disables it, CAMERA_BRIDGE_ADDR default 10.231.1.3)
 #   with args    : exec them (e.g. `docker compose run sim bash`)
 # Env: HEADLESS=1 (default) no Gazebo GUI; HEADLESS=0 shows it via X11.
 #      PX4_SIM_MODEL (default gz_maverick, set by compose). ROS_DOMAIN_ID is picked up as UXRCE_DDS_DOM_ID.
@@ -39,6 +40,7 @@ cleanup() {
         { [ -z "$PX4_PID" ] || ! kill -0 "$PX4_PID" 2>/dev/null; } && break
         sleep 0.5
     done
+    pkill -TERM -f "camera_driver.driver" 2>/dev/null
     pkill -TERM -f "gz sim" 2>/dev/null
     [ -n "$PX4_PID" ] && kill -KILL "$PX4_PID" 2>/dev/null
     exit "${1:-0}"
@@ -75,6 +77,12 @@ PX4_PID=$!
         if grep -q "Ready for takeoff" "$PX4_LOG" 2>/dev/null; then
             touch "$READY_FILE"
             echo "[entrypoint] PX4 ready -> $READY_FILE"
+            # Camera driver ("the camera hardware"): Gazebo sensor topics -> TCP to the bridge on
+            # the drone network. Gazebo transport stays on the world network (GZ_IP).
+            if [ "${CAMERA_DRIVER:-1}" = 1 ]; then
+                cd /maverick/sim/camera_driver \
+                    && exec python3 -u -m camera_driver.driver --host "${CAMERA_BRIDGE_ADDR:-10.231.1.3}"
+            fi
             exit 0
         fi
         sleep 0.5

@@ -9,6 +9,8 @@
 
   <depend>rclpy</depend>
   <depend>px4_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
   <depend>maverick_interfaces</depend>
 
   <test_depend>python3-pytest</test_depend>

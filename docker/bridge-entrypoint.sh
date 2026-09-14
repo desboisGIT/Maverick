@@ -28,7 +28,18 @@ ZENOH_PID=$!
     exec ros2 run maverick_bridge relay
 ) &
 
-cleanup() { trap '' TERM INT; kill -TERM "$AGENT_PID" "$ZENOH_PID" 2>/dev/null; pkill -TERM -f "maverick_bridge" 2>/dev/null; exit 0; }
+# Camera relay: receives the camera driver's TCP stream from the sim container on the drone
+# network only (listen address = our drone-network IP) and publishes /maverick/camera/*.
+(
+    until [ -f /maverick/ros2_ws/install/setup.bash ] \
+        && ros2 pkg prefix maverick_bridge >/dev/null 2>&1; do
+        . /etc/profile.d/maverick.sh
+        sleep 2
+    done
+    CAMERA_LISTEN="${CAMERA_LISTEN:-10.231.1.3}" exec ros2 run maverick_bridge camera_relay
+) &
+
+cleanup() { trap '' TERM INT; kill -TERM "$AGENT_PID" "$ZENOH_PID" 2>/dev/null; pkill -TERM -f "maverick_bridge" 2>/dev/null; pkill -TERM -f camera_relay 2>/dev/null; exit 0; }
 trap cleanup TERM INT
 wait -n "$AGENT_PID" "$ZENOH_PID"
 echo "[bridge] agent or zenoh bridge exited"

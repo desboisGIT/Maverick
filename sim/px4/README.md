@@ -2,7 +2,7 @@
 
 Files:
 - `sim/px4/airframes/4500_gz_maverick`: airframe (sources `4021_gz_x500_flow`, then `param set-default` for Maverick's parameters, each with its measured reason).
-- `sim/models/maverick/{model.config,model.sdf}`: Gazebo model `maverick`, a plain include of PX4's `x500_flow` (x500 + optical flow + LW20 downward rangefinder, no GPS). Nothing new yet; the camera arrives in S3.
+- `sim/models/maverick/{model.config,model.sdf}`: Gazebo model `maverick`, a plain include of PX4's `x500_flow` (x500 + optical flow + LW20 downward rangefinder, no GPS). Plus the S3 forward camera (RGB, depth, semantic; mount in `camera_mount.json`).
 
 ## Installing into the sim container (bind mounts)
 
@@ -45,3 +45,9 @@ Validation with the final airframe only (no `PX4_PARAM_*` overrides), 5 runs eac
 | 15 s | 5/5: Land started 1.0-1.4 s after the last setpoint, disarmed at 14.7-15.2 s, horizontal deviation 0.09-0.33 m, no re-arm. |
 
 Consequence for the design: there is no PX4 "hold, then land after 10 s". The PX4 backstop is "land at once, recoverable by resuming setpoints". Any hold-in-place behaviour for 1-4 s outages has to come from the host flight client (keep the last position setpoint) and from the link recovering fast enough; PX4 itself starts a slow descent after 0.5 s plus about 0.5 s of detection latency.
+
+## Camera (S3)
+
+The model carries `camera_link` (5 g, so flight is unchanged) with three co-located sensors at 5 Hz, 640x480, horizontal FOV 1.274 rad (the OAK-D Lite depth FOV), clip 0.2 to 19.1 m: `rgb` (camera), `depth` (depth_camera, float32 m) and `semantic` (segmentation, semantic type, worldgen class ids). Gazebo topics (global names, set by `<topic>`): `/maverick/camera/rgb`, `/maverick/camera/depth`, `/maverick/camera/semantic/labels_map`. Mount (single source of truth, `camera_mount.json`; `model.sdf` is tested against it): sensor frame at x 0.12, y 0, z 0.10 m from `base_link` (FLU), level, looking forward. The bridge turns it into the optical frame (z forward, x right, y down); `maverick_bridge.camera_pose` holds the maths.
+
+Data path: `sim/camera_driver` (sim container, started by `sim-entrypoint.sh` once PX4 is ready) pairs the three images by sim time, downsamples depth (nearest valid return of each 4x4 block) and semantic (block-centre sample) to 160x120, JPEG-encodes RGB (quality 80) and streams `maverick_bridge.camera_protocol` frames over TCP to the bridge (10.231.1.3:5600, drone network only). `maverick_bridge camera_relay` attaches the PX4 pose and publishes `/maverick/camera/{rgb/compressed,depth,semantic,info,pose}` with one stamp; Zenoh forwards them best-effort. The map frame origin is the PX4 local origin (the spawn point), not the Gazebo world origin. Disable the driver with `CAMERA_DRIVER=0`.

@@ -4,5 +4,62 @@
     <include merge='true'>
       <uri>x500_flow</uri>
     </include>
+
+    <!-- Forward RGB-D camera plus a semantic segmentation camera at the same pose and with the
+         same intrinsics (the "camera hardware"; sim/camera_driver reads the three topics).
+         Mount pose and intrinsics: keep in sync with camera_mount.json (tested).
+         The link is almost massless (5 g, a bare sensor board) so flight behaviour does not
+         change; PX4's x500_depth uses the 61 g OAK-D Lite instead.
+         All three sensors render 640x480; the driver downsamples depth and semantic to 160x120.
+         5 Hz keeps the render load small (S3 plan contract). -->
+    <link name='camera_link'>
+      <pose relative_to='base_link'>0.12 0 0.10 0 0 0</pose>
+      <inertial>
+        <mass>0.005</mass>
+        <inertia>
+          <ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <gravity>true</gravity>
+      <sensor name='rgb' type='camera'>
+        <topic>maverick/camera/rgb</topic>
+        <camera>
+          <horizontal_fov>1.274</horizontal_fov>
+          <image><width>640</width><height>480</height><format>R8G8B8</format></image>
+          <clip><near>0.1</near><far>30</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>5</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+      <sensor name='depth' type='depth_camera'>
+        <topic>maverick/camera/depth</topic>
+        <camera>
+          <horizontal_fov>1.274</horizontal_fov>
+          <image><width>640</width><height>480</height><format>R_FLOAT32</format></image>
+          <clip><near>0.2</near><far>19.1</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>5</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+      <sensor name='semantic' type='segmentation'>
+        <topic>maverick/camera/semantic</topic>
+        <camera>
+          <segmentation_type>semantic</segmentation_type>
+          <horizontal_fov>1.274</horizontal_fov>
+          <image><width>640</width><height>480</height></image>
+          <clip><near>0.2</near><far>19.1</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>5</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name='camera_joint' type='fixed'>
+      <parent>base_link</parent>
+      <child>camera_link</child>
+    </joint>
   </model>
 </sdf>

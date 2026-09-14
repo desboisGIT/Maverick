@@ -133,6 +133,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip iproute2 
 # Lint tool for `just lint` (not in Ubuntu 24.04's archive at a useful version).
 RUN python3 -m pip install --no-cache-dir --break-system-packages ruff
 
+# --- stage S3: camera driver (sim container) ---------------------------------
+# The driver needs gz-transport13 + gz-msgs10 Python bindings (from PX4's ubuntu.sh, apt),
+# numpy (downsampling) and Pillow (JPEG). The last two are already pulled in by PX4's Python
+# requirements; listing them keeps the dependency explicit (no-op when satisfied).
+RUN python3 -m pip install --no-cache-dir --break-system-packages numpy pillow \
+    && python3 -c "import numpy, PIL.Image; from gz.transport13 import Node; from gz.msgs10.image_pb2 import Image"
+
 COPY docker/profile.d-maverick.sh /etc/profile.d/maverick.sh
 COPY docker/sim-entrypoint.sh docker/bridge-entrypoint.sh docker/host-entrypoint.sh /usr/local/bin/
 RUN chmod 0644 /etc/profile.d/maverick.sh \

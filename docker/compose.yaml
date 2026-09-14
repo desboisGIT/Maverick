@@ -13,7 +13,7 @@
 name: maverick
 
 x-maverick: &maverick
-  image: maverick-sim:s1
+  image: maverick-sim:s3
   init: true                         # reap zombies, forward signals
   volumes:
     - ..:/maverick                   # repo root, read-write (image user is uid 1000)

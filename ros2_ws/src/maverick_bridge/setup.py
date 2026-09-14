@@ -20,6 +20,7 @@ setup(
     entry_points={
         "console_scripts": [
             "relay = maverick_bridge.relay_node:main",
+            "camera_relay = maverick_bridge.camera_node:main",
         ],
     },
 )
