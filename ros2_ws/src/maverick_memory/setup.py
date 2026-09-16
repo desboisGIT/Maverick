@@ -20,6 +20,7 @@ setup(
     entry_points={
         "console_scripts": [
             "eval_offline = maverick_memory.eval_offline:main",
+            "memory_node = maverick_memory.memory_node:main",
         ],
     },
 )

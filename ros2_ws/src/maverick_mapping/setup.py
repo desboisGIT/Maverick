@@ -20,6 +20,7 @@ setup(
     entry_points={
         "console_scripts": [
             "explore_offline = maverick_mapping.explore_offline:main",
+            "mapping_node = maverick_mapping.mapping_node:main",
         ],
     },
 )
