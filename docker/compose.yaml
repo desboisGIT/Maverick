@@ -82,6 +82,12 @@ services:
     command: ["host-entrypoint.sh"]
     stop_grace_period: 5s
     cap_add: [NET_ADMIN]
+    environment:
+      <<: *maverick-env
+      MAVERICK_HOST_LAUNCH: "${MAVERICK_HOST_LAUNCH:-none}"   # "s3" starts the S3 host stack
+      MAVERICK_LAUNCH_ARGS: "${MAVERICK_LAUNCH_ARGS:-}"
+    ports:
+      - "127.0.0.1:8765:8765"          # Mission Console gateway (websocket), localhost only
     networks:
       wifi: {ipv4_address: 10.231.2.2}
 

@@ -168,3 +168,17 @@ def test_arm_rejected_times_out():
         t += DT
         m.step(Observation(t, (0, 0, 0), 1, 4, True, 0.0))
     assert m.result == "arm_rejected"
+
+
+
+def test_goal_yaw_is_kept_until_the_next_goal_with_a_yaw():
+    s = Sim(hover_seconds=100.0)
+    s.run(8)
+    assert s.m.phase is Phase.HOVER
+    assert math.isnan(s.m.yaw)  # no heading requested: PX4 keeps its own
+    assert s.m.on_goal("goto", (1.0, 0.0, -2.0), yaw=1.2)
+    assert s.m.yaw == 1.2
+    assert s.m.on_goal("goto", (1.0, 1.0, -2.0))  # no yaw: keep the last one
+    assert s.m.yaw == 1.2
+    assert s.m.on_goal("goto", (1.0, 1.0, -2.0), yaw=float("inf"))  # non-finite: ignored
+    assert s.m.yaw == 1.2

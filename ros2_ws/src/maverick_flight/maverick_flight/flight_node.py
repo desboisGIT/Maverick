@@ -5,7 +5,8 @@ Topics
   out /maverick/flight/command   maverick_interfaces/FlightCommand (ARM, OFFBOARD, LAND)
   out /maverick/flight/status    std_msgs/String, JSON, 1 Hz and on every event
   in  /maverick/flight/goal      std_msgs/String, JSON, one goal per message:
-         {"mode": "goto", "x": N, "y": E, "z": D, "speed": m/s (optional)}   walk there, <= limit
+         {"mode": "goto", "x": N, "y": E, "z": D, "speed": m/s (optional),
+          "yaw": rad NED (optional; kept until the next goal with a yaw)}   walk there, <= limit
          {"mode": "setpoint", "x": .., "y": .., "z": ..}                      use it directly
       (PX4 local NED metres.) The gate rejects NaN/inf, outside the geofence, a "setpoint" that
       jumps more than 1 m from the current one, and a speed above the limit; each is logged.
@@ -15,7 +16,7 @@ Topics
 Every state change is also printed to stdout as one JSON line (flushed), so it can be read
 with `docker logs` / `docker exec`.
 
-Parameters: altitude (2.0), hover_seconds (20.0; <= 0 means until "land"), geofence_min /
+Parameters: altitude (1.2), hover_seconds (20.0; <= 0 means until "land"), geofence_min /
 geofence_max (NED boxes), max_speed (1.0), max_jump (1.0), gap_abort_s (5.0).
 """
 
@@ -58,12 +59,12 @@ class FlightClient(Node):
     def __init__(self) -> None:
         super().__init__("flight_client")
         p = self.declare_parameter
-        altitude = p("altitude", 2.0).value
+        altitude = p("altitude", 1.2).value
         hover_s = p("hover_seconds", 20.0).value
         gate = SafetyGate(
             GateConfig(
-                tuple(p("geofence_min", [-5.0, -5.0, -4.0]).value),
-                tuple(p("geofence_max", [5.0, 5.0, 0.3]).value),
+                tuple(p("geofence_min", [-15.0, -15.0, -2.4]).value),
+                tuple(p("geofence_max", [15.0, 15.0, 0.3]).value),
                 p("max_jump", 1.0).value,
                 p("max_speed", 1.0).value,
             )
@@ -133,13 +134,14 @@ class FlightClient(Node):
             d = json.loads(msg.data)
             pos = (float(d["x"]), float(d["y"]), float(d["z"]))
             speed = float(d["speed"]) if d.get("speed") is not None else None
+            yaw = float(d["yaw"]) if d.get("yaw") is not None else None
             mode = str(d.get("mode", "goto"))
             if mode not in ("goto", "setpoint"):
                 raise ValueError(f"unknown mode {mode!r}")
         except (ValueError, KeyError, TypeError) as exc:
             emit({"event": "goal_malformed", "error": str(exc), "data": msg.data[:200]})
             return
-        self.mission.on_goal(mode, pos, speed)
+        self.mission.on_goal(mode, pos, speed, yaw)
         self._flush_events()
 
     def _on_mission(self, msg: String) -> None:
@@ -165,7 +167,7 @@ class FlightClient(Node):
             sp = FlightSetpoint()
             sp.stamp = self.get_clock().now().to_msg()
             sp.position_ned = [float(v) for v in action.setpoint]
-            sp.yaw = 0.0
+            sp.yaw = self.mission.yaw  # NaN = keep the current heading
             self._sp_pub.publish(sp)
         for name in action.commands:
             cmd = FlightCommand()

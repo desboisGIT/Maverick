@@ -35,6 +35,11 @@ CASES = ("F1", "F2", "F3", "F4", "F6")
 FLIGHT_BIN = "/maverick/ros2_ws/install/maverick_flight/lib/maverick_flight"
 HOVER_TIMEOUT_S = 150.0
 END_TIMEOUT_S = 150.0
+# The S1 suite pins the flight client's S1 envelope explicitly (the defaults changed for
+# apartments in S3): 2 m hover, +/-5 m geofence. F6's out-of-geofence goals rely on it.
+S1_FLIGHT_PARAMS = (
+    "-p altitude:=2.0 -p 'geofence_min:=[-5.0,-5.0,-4.0]' -p 'geofence_max:=[5.0,5.0,0.3]'"
+)
 POST_LAND_WATCH_S = 5.0  # watch for a re-arm after the landing
 RETRY_ATTEMPTS = 2
 
@@ -160,7 +165,7 @@ def execute(stack: Stack, case: str, params: dict) -> tuple[RunData, dict]:
         stack.exec(
             "host",
             f"cd /tmp && nohup {FLIGHT_BIN}/flight_client --ros-args -p hover_seconds:={hold_s} "
-            f"> /tmp/flight.log 2>&1 &",
+            f"{S1_FLIGHT_PARAMS} > /tmp/flight.log 2>&1 &",
             timeout=30,
         )
         hover = wait_for(

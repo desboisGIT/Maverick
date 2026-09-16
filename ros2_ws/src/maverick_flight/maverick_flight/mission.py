@@ -85,6 +85,7 @@ class FlightMission:
         self.hold: Vec3 | None = None  # hover point
         self.goal: Vec3 | None = None
         self.goal_speed: float | None = None
+        self.yaw: float = math.nan  # heading setpoint, PX4 NED radians; NaN = keep current
         self.events: list[dict] = []
         self._t0: float | None = None
         self._phase_t0 = 0.0
@@ -119,7 +120,9 @@ class FlightMission:
         return self.phase is Phase.DONE
 
     # -- inputs ------------------------------------------------------------------------------
-    def on_goal(self, mode: str, position: Vec3, speed: float | None = None) -> bool:
+    def on_goal(
+        self, mode: str, position: Vec3, speed: float | None = None, yaw: float | None = None
+    ) -> bool:
         """Offer a goal. Returns True if accepted. Goals only act while hovering.
 
         mode "goto": walk to `position` at `speed` (default: the gate's limit).
@@ -146,7 +149,9 @@ class FlightMission:
         else:
             self.goal = position
             self.goal_speed = speed
-        self._emit("goal", mode=mode, goal=position, speed=speed)
+        if yaw is not None and math.isfinite(yaw):
+            self.yaw = yaw
+        self._emit("goal", mode=mode, goal=position, speed=speed, yaw=yaw)
         return True
 
     def request_land(self) -> None:
