@@ -40,6 +40,10 @@ class Rejection:
 @dataclass
 class SafetyGate:
     config: GateConfig = field(default_factory=GateConfig)
+    # The geofence box is relative to this point (the take-off point: x, y and ground z), so
+    # it means "this far from where the mission started" whatever the estimator origin is.
+    # PX4's origin drifts between flights on a reused stack (~0.16 m down per flight in SITL).
+    origin: Vec3 = (0.0, 0.0, 0.0)
     rejections: dict[str, int] = field(default_factory=dict)
     last_rejection: Rejection | None = None
 
@@ -47,9 +51,11 @@ class SafetyGate:
         if not all(math.isfinite(v) for v in p):
             return Rejection(REASON_NON_FINITE, f"position {p}")
         lo, hi = self.config.geofence_min, self.config.geofence_max
-        for axis, v, a, b in zip("xyz", p, lo, hi, strict=True):
-            if not a <= v <= b:
-                return Rejection(REASON_GEOFENCE, f"{axis}={v:.2f} outside [{a}, {b}]")
+        for axis, v, o, a, b in zip("xyz", p, self.origin, lo, hi, strict=True):
+            if not a <= v - o <= b:
+                return Rejection(
+                    REASON_GEOFENCE, f"{axis}={v:.2f} ({v - o:+.2f} from start) outside [{a}, {b}]"
+                )
         return None
 
     def check_goal(self, p: Vec3, speed: float | None = None) -> Rejection | None:

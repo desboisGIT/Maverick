@@ -37,8 +37,10 @@ HOVER_TIMEOUT_S = 150.0
 END_TIMEOUT_S = 150.0
 # The S1 suite pins the flight client's S1 envelope explicitly (the defaults changed for
 # apartments in S3): 2 m hover, +/-5 m geofence. F6's out-of-geofence goals rely on it.
+S1_ALTITUDE_M = 2.0
 S1_FLIGHT_PARAMS = (
-    "-p altitude:=2.0 -p 'geofence_min:=[-5.0,-5.0,-4.0]' -p 'geofence_max:=[5.0,5.0,0.3]'"
+    f"-p altitude:={S1_ALTITUDE_M} "
+    "-p 'geofence_min:=[-5.0,-5.0,-4.0]' -p 'geofence_max:=[5.0,5.0,0.3]'"
 )
 POST_LAND_WATCH_S = 5.0  # watch for a re-arm after the landing
 RETRY_ATTEMPTS = 2
@@ -198,7 +200,11 @@ def execute(stack: Stack, case: str, params: dict) -> tuple[RunData, dict]:
             facts["killed"] = True
             fault = {"t_kill": faults.kill_process(stack, "bridge", "[m]averick_bridge/relay")}
         else:
-            fault = run_goals(stack, params)
+            pre = find(flight.rows, lambda e: e.get("event") == "phase" and "hold" in e)
+            if not pre:
+                raise RunError("no take-off point in the flight log")
+            hold = pre["hold"]  # NED hover point; F6 goals are relative to the take-off point
+            fault = run_goals(stack, params, (hold[0], hold[1], hold[2] + S1_ALTITUDE_M))
             stack.exec(
                 "host",
                 "ros2 topic pub --once -w 1 /maverick/flight/mission "
@@ -245,8 +251,17 @@ def execute(stack: Stack, case: str, params: dict) -> tuple[RunData, dict]:
     return data, facts
 
 
-def run_goals(stack: Stack, params: dict) -> dict:
-    goals = [g["goal"] for g in params["goals"]]
+def shift_goal(goal: dict, origin: tuple[float, float, float]) -> dict:
+    """Goal relative to the take-off point (z = -2 is 2 m up) -> PX4 local NED."""
+    out = dict(goal)
+    for k, o in zip("xyz", origin, strict=True):
+        out[k] = goal[k] + o  # NaN/inf stay non-finite
+    return out
+
+
+def run_goals(stack: Stack, params: dict, origin: tuple[float, float, float]) -> dict:
+    """Send F6's goals, written relative to the take-off point, shifted to PX4's frame."""
+    goals = [shift_goal(g["goal"], origin) for g in params["goals"]]
     r = stack.exec(
         "host",
         f"ros2 run maverick_flight inject_goals {shlex.quote(json.dumps(goals))} --gap 1.0",

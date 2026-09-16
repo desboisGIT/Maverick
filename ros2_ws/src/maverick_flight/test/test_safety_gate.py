@@ -72,3 +72,13 @@ def test_reject_counts_and_remembers():
         gate.last_rejection.reason == REASON_NON_FINITE
         or gate.last_rejection.reason == REASON_GEOFENCE
     )
+
+
+def test_geofence_is_relative_to_the_origin():
+    from maverick_flight.safety_gate import SafetyGate
+
+    g = SafetyGate()
+    assert g.check_position((0.0, 0.0, -4.27)) is not None  # 4.27 m up: outside [-4, 0.3]
+    g.origin = (2.1, -0.27, -2.27)  # estimator origin drifted: ground is at z = -2.27
+    assert g.check_position((2.1, -0.27, -4.27)) is None  # 2 m above the take-off point
+    assert g.check_position((2.1 + 5.5, -0.27, -4.27)) is not None  # 5.5 m from take-off

@@ -137,3 +137,15 @@ def test_f6_matches_reasons_and_setpoint():
     assert not score_f6(run("F6", {}, fault, gt, sp, wrong)).passed
     leaked = sp + [{"t": 102.0, "k": "sp", "p": [1.0, 0.0, -2.0]}]
     assert not score_f6(run("F6", {}, fault, gt, leaked, flight)).passed
+
+
+def test_f6_goals_are_shifted_to_the_take_off_point():
+    import math
+
+    from referee.failsafe import shift_goal
+
+    g = shift_goal({"mode": "goto", "x": 0.0, "y": 0.0, "z": -2.0}, (2.0, -1.0, -2.27))
+    assert (g["x"], g["y"], round(g["z"], 2)) == (2.0, -1.0, -4.27)
+    assert g["mode"] == "goto"
+    n = shift_goal({"mode": "goto", "x": math.nan, "y": 0.0, "z": -2.0}, (2.0, -1.0, -2.27))
+    assert math.isnan(n["x"])

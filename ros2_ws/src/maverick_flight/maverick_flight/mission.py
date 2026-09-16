@@ -207,14 +207,8 @@ class FlightMission:
 
         if self.phase is Phase.WAIT_DATA:
             if pos is not None and obs.arming_state is not None:
-                start = (
-                    pos[0],
-                    pos[1],
-                    min(
-                        max(pos[2], self.gate.config.geofence_min[2]),
-                        self.gate.config.geofence_max[2],
-                    ),
-                )
+                start = (pos[0], pos[1], pos[2])
+                self.gate.origin = start  # geofence relative to the take-off point
                 self.setpoint = start
                 # altitude is relative to the ground height at start (the estimator origin drifts)
                 self.hold = (pos[0], pos[1], pos[2] - cfg.altitude)

@@ -182,3 +182,13 @@ def test_goal_yaw_is_kept_until_the_next_goal_with_a_yaw():
     assert s.m.yaw == 1.2
     assert s.m.on_goal("goto", (1.0, 1.0, -2.0), yaw=float("inf"))  # non-finite: ignored
     assert s.m.yaw == 1.2
+
+
+def test_climbs_when_the_estimator_origin_has_drifted():
+    """Regression: on a reused stack the ground estimate drifted to z = -2.27 (flight 15)."""
+    s = Sim(hover_seconds=100.0, altitude=2.0)
+    s.pos = [2.1, -0.27, -2.27]
+    s.run(8)
+    assert s.m.phase is Phase.HOVER
+    assert abs(s.pos[2] - (-4.27)) < 0.25
+    assert s.m.gate.origin == (2.1, -0.27, -2.27)
