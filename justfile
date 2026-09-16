@@ -73,6 +73,12 @@ lint:
 test-failsafe *args:
     PYTHONPATH=sim/referee python3 -m referee.failsafe {{args}}
 
+# S3 scenarios in generated apartments (runs on the host, drives docker compose):
+# e.g. `just test-s3 --scenario hover --seed-set held_out --runs 10`,
+# `just test-s3 --scenario explore --seeds 1000000 --budget 360`, `--scenario goto_room ...`
+test-s3 *args:
+    PYTHONPATH=sim/referee python3 -m referee.s3 {{args}}
+
 # Generate random apartment world(s) into sim/worlds/generated/, e.g. `just worldgen 7` or
 # `just worldgen 7 --count 5 --no-ceiling`
 worldgen seed="7" *args:

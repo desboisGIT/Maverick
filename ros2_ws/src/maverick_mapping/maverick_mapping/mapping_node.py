@@ -15,7 +15,9 @@ Topics
 
 Parameters: resolution (0.1), max_range (5.0), max_rate_hz (5.0), stride (1), sync_tol_s (0.03),
 grid_rate_hz (1.0), delta_rate_hz (4.0), band [0.8, 1.6] (2D projection band, m), altitude (1.2,
-z of the frontier markers), min_cluster (3), snapshot_period_s (30).
+z of the frontier markers), min_cluster (3), snapshot_period_s (30), dump_path (/tmp/map_dump.npz).
+Service /maverick/map/dump (std_srvs/Trigger) writes the voxel map to dump_path (map_io, for the
+referee's scoring); the response message is the path.
 """
 
 from __future__ import annotations
@@ -36,9 +38,11 @@ from rclpy.qos import (
 )
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Empty, String
+from std_srvs.srv import Trigger
 
 from . import topics as T
 from .frontiers import detect_frontiers
+from .map_io import save_map
 from .ros_conv import (
     RateLimiter,
     SyncBuffer,
@@ -88,6 +92,8 @@ class MappingNode(Node):
         self.create_timer(1.0 / float(p("grid_rate_hz", 1.0).value), self._publish_grid)
         self.create_timer(1.0 / float(p("delta_rate_hz", 4.0).value), self._publish_delta)
         self._want_reset = True
+        self.dump_path = str(p("dump_path", "/tmp/map_dump.npz").value)
+        self.create_service(Trigger, T.MAP_DUMP, self._on_dump)
         self.get_logger().info("mapping_node up")
 
     # -- inputs ------------------------------------------------------------------------------
@@ -96,6 +102,14 @@ class MappingNode(Node):
 
     def _on_request(self, _msg: Empty) -> None:
         self._want_reset = True
+
+    def _on_dump(self, _req, resp):
+        try:
+            save_map(self.vmap, self.dump_path)
+            resp.success, resp.message = True, self.dump_path
+        except Exception as exc:  # noqa: BLE001 - report to the caller, keep the node alive
+            resp.success, resp.message = False, repr(exc)
+        return resp
 
     def _on_depth(self, msg: Image) -> None:
         self._feed("depth", msg)

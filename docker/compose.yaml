@@ -34,10 +34,12 @@ services:
     volumes:
       - ..:/maverick
       - /tmp/.X11-unix:/tmp/.X11-unix  # X11 socket for the Gazebo GUI
-      # Maverick's drone (x500_flow + Maverick PX4 params, see sim/px4/README.md) and worlds.
+      # Maverick's drone (x500_flow + Maverick PX4 params, see sim/px4/README.md).
       - ../sim/px4/airframes/4500_gz_maverick:/opt/PX4-Autopilot/build/px4_sitl_default/etc/init.d-posix/airframes/4500_gz_maverick:ro
       - ../sim/models/maverick:/opt/PX4-Autopilot/Tools/simulation/gz/models/maverick:ro
-      - ../sim/worlds/textured.sdf:/opt/PX4-Autopilot/Tools/simulation/gz/worlds/textured.sdf:ro
+      # The entrypoint is baked into the image; mounting it lets PX4_GZ_WORLDS take effect
+      # without a rebuild (it patches gz_env.sh, which otherwise forces PX4's own worlds dir).
+      - ../docker/sim-entrypoint.sh:/usr/local/bin/sim-entrypoint.sh:ro
     environment:
       <<: *maverick-env
       HEADLESS: "${HEADLESS:-1}"       # 1 = no Gazebo GUI, 0 = show it
@@ -49,6 +51,11 @@ services:
       # Optical flow needs a textured floor: on PX4's plain default world the EKF reports
       # zero motion while the drone drifts away (measured in S1, sim/px4/README.md).
       PX4_GZ_WORLD: "${PX4_GZ_WORLD:-textured}"
+      # Worlds directory: <PX4_GZ_WORLDS>/<PX4_GZ_WORLD>.sdf. Default keeps the textured world
+      # (sim/worlds/textured.sdf); generated flats: PX4_GZ_WORLDS=/maverick/sim/worlds/generated
+      # PX4_GZ_WORLD=apt_<seed> PX4_GZ_MODEL_POSE="x,y,0,0,0,yaw" (referee.s3 sets all three).
+      PX4_GZ_WORLDS: "${PX4_GZ_WORLDS:-/maverick/sim/worlds}"
+      PX4_GZ_MODEL_POSE: "${PX4_GZ_MODEL_POSE:-}"   # empty: PX4 spawns at the world origin
       ROS_DOMAIN_ID: "${PX4_DDS_DOMAIN_ID:-1}"   # rcS copies it to UXRCE_DDS_DOM_ID
       GZ_IP: 10.231.3.2                # Gazebo transport on `world`, so the referee can see it
       # PX4's uXRCE-DDS client connects to the agent in the bridge container:
