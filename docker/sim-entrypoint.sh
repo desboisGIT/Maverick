@@ -55,6 +55,16 @@ trap 'cleanup 0' TERM INT
 export PX4_SIM_MODEL="${PX4_SIM_MODEL:-gz_maverick}"
 export GZ_IP="${GZ_IP:-127.0.0.1}"
 cd "$PX4_BUILD/rootfs" || exit 1
+# px4-rc.gzsim sources rootfs/gz_env.sh, which *overwrites* PX4_GZ_WORLDS with PX4's own worlds
+# directory. Patch it so a PX4_GZ_WORLDS from the environment (compose) wins. [F] checked in the image.
+if [ -n "${PX4_GZ_WORLDS:-}" ]; then
+    if [ ! -f "$PX4_GZ_WORLDS/${PX4_GZ_WORLD:-default}.sdf" ]; then
+        echo "[entrypoint] world file $PX4_GZ_WORLDS/${PX4_GZ_WORLD:-default}.sdf not found" >&2
+        exit 1
+    fi
+    sed -i "s|^export PX4_GZ_WORLDS=.*|export PX4_GZ_WORLDS=$PX4_GZ_WORLDS|" gz_env.sh
+    echo "[entrypoint] world ${PX4_GZ_WORLD:-default} from $PX4_GZ_WORLDS, model pose '${PX4_GZ_MODEL_POSE:-}'"
+fi
 stdbuf -oL -eL "$PX4_BUILD/bin/px4" -d </dev/null > >(tee -a "$PX4_LOG") 2>&1 &
 PX4_PID=$!
 

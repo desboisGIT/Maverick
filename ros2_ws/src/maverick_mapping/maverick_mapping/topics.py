@@ -13,6 +13,7 @@ CAM_POSE = "/maverick/camera/pose"
 MAP_GRID = "/maverick/map/grid"  # nav_msgs/OccupancyGrid, 1 Hz, latched
 MAP_VOXELS = "/maverick/map/voxels"  # String JSON voxel delta, <= 5 Hz
 MAP_VOXELS_REQUEST = "/maverick/map/voxels_request"  # std_msgs/Empty: please send a reset snapshot
+MAP_DUMP = "/maverick/map/dump"  # std_srvs/Trigger: write the voxel map to a .npz (referee)
 MAP_FRONTIERS = "/maverick/map/frontiers"  # String JSON list, 1 Hz, latched
 
 MEM_DETECTIONS = "/maverick/memory/detections"  # String JSON, one per processed frame
