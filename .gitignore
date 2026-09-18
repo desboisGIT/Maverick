@@ -11,3 +11,4 @@ runs/
 *.mcap
 # generated apartment worlds
 sim/worlds/generated/
+.claude/
