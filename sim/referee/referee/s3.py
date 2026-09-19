@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shlex
 import sys
@@ -103,12 +104,12 @@ def in_repo(path: Path) -> str:
 
 
 # -- host helpers ------------------------------------------------------------------------------
-def echo_json(stack: Stack, topic: str, timeout: float = 6.0) -> dict | None:
+def echo_json(stack: Stack, topic: str, timeout: float = 6.0, latched: bool = True) -> dict | None:
     """Latest message of a latched std_msgs/String JSON topic, or None."""
+    qos = "--qos-durability transient_local --qos-reliability reliable " if latched else ""
     r = stack.exec(
         "host",
-        f"timeout {timeout:.0f} ros2 topic echo --once --field data "
-        f"--qos-durability transient_local --qos-reliability reliable {topic} 2>/dev/null",
+        f"timeout {timeout:.0f} ros2 topic echo --once --field data {qos}{topic} 2>/dev/null",
         timeout=timeout + 20,
     )
     m = re.search(r"\{.*\}", r.stdout, re.S)
@@ -228,6 +229,10 @@ def run_hover(stack: Stack, world: dict, out: Path, i: int, args) -> dict:
             raise RunError("flight client did not finish")
         time.sleep(3.0)
         m = hover_metrics(list(gt.rows), list(flight.rows), list(px4.rows), ground_z)
+        sp = world["manifest"]["spawn"]["pose"]
+        g0 = gt.rows[0]
+        m["spawn_err_m"] = round(math.hypot(g0["x"] - sp[0], g0["y"] - sp[1]), 3)
+        m["ground_z"] = round(ground_z, 3)
     finally:
         stop_observers(stack)
         for s in (gt, px4, flight):
@@ -244,7 +249,10 @@ def run_explore(stack: Stack, world: dict, out: Path, i: int, args, goto: bool) 
     try:
         ground_z = ground_z_of(gt)
         if not wait_for(
-            lambda: (echo_json(stack, "/maverick/flight/status") or {}).get("phase") == "hover",
+            lambda: (
+                (echo_json(stack, "/maverick/flight/status", latched=False) or {}).get("phase")
+                == "hover"
+            ),
             TAKEOFF_TIMEOUT_S,
             2.0,
         ):
@@ -275,7 +283,7 @@ def run_explore(stack: Stack, world: dict, out: Path, i: int, args, goto: bool) 
                 f"flat {world['name']} has no {kitchen}"
             )
             send_request(stack, {"skill": "goto_room", "room_type": kitchen})
-            gprog = wait_skill(stack, "goto_room", GOTO_TIMEOUT_S)
+            gprog = wait_skill(stack, "goto", GOTO_TIMEOUT_S)  # progress names it "goto"
             time.sleep(2.0)  # settle
             end_pos = [r for r in gt.rows if r["t"] <= time.time()][-1]
             goto_m = {

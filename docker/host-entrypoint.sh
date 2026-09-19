@@ -12,7 +12,7 @@ trap 'kill -TERM "$ZENOH_PID" $LAUNCH_PID 2>/dev/null; exit 0' TERM INT
 # Needs the workspace built first (`just ws-build`).
 case "${MAVERICK_HOST_LAUNCH:-none}" in
     s3)
-        ( . /maverick/ros2_ws/install/setup.bash \
+        ( set +u; . /maverick/ros2_ws/install/setup.bash \
           && exec ros2 launch maverick_gateway s3_host.launch.py ${MAVERICK_LAUNCH_ARGS:-} ) &
         LAUNCH_PID=$!
         echo "[host] started s3 host launch (pid $LAUNCH_PID)"

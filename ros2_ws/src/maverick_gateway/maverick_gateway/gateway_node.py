@@ -96,7 +96,7 @@ class GatewayNode(Node):
         q = qos_profile_sensor_data
         self.create_subscription(PoseStamped, T.CAM_POSE, self._on_pose, q)
         self.create_subscription(CompressedImage, T.CAM_RGB, self._on_rgb, q)
-        for qos in (q, LATCHED):
+        for qos in (q,):  # sensor-data QoS only (see mapping_node)
             self.create_subscription(CameraInfo, T.CAM_INFO, self._on_info, qos)
         self.create_subscription(String, T.MEM_DETECTIONS, self._on_detections, RELIABLE)
         self.create_subscription(String, T.MAP_VOXELS, self._on_voxels, RELIABLE)

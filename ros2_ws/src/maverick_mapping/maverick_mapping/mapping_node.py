@@ -83,7 +83,9 @@ class MappingNode(Node):
 
         self.create_subscription(Image, T.CAM_DEPTH, self._on_depth, qos_profile_sensor_data)
         self.create_subscription(PoseStamped, T.CAM_POSE, self._on_pose, qos_profile_sensor_data)
-        for q in (qos_profile_sensor_data, LATCHED):  # publisher may be volatile or latched
+        for q in (
+            qos_profile_sensor_data,
+        ):  # best-effort only: a latched sub makes the bridge request incompatible QoS
             self.create_subscription(CameraInfo, T.CAM_INFO, self._on_info, q)
         self.create_subscription(Empty, T.MAP_VOXELS_REQUEST, self._on_request, 10)
         self.grid_pub = self.create_publisher(OccupancyGrid, T.MAP_GRID, LATCHED)

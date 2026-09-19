@@ -85,7 +85,9 @@ class HoverTestNode(Node):
                 QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE),
             )
             self.create_subscription(
-                BridgeStatus, "/maverick/bridge/status", self._on_bridge_status,
+                BridgeStatus,
+                "/maverick/bridge/status",
+                self._on_bridge_status,
                 qos_profile_sensor_data,
             )
             self.create_timer(BRIDGE_TICK_S, self._tick)
@@ -192,7 +194,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hover-seconds", type=float, default=10.0)
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument(
-        "--via", choices=["direct", "bridge"], default="direct",
+        "--via",
+        choices=["direct", "bridge"],
+        default="direct",
         help="direct: publish px4_msgs on /fmu/in; bridge: publish Maverick flight messages",
     )
     args = parser.parse_args(args_in)
@@ -211,8 +215,17 @@ def main(argv: list[str] | None = None) -> int:
 
     v = mission.verdict
     if v is None:
-        print(json.dumps({"result": "fail", "reason": "interrupted", "max_alt_error_m": 0.0,
-                          "max_xy_drift_m": 0.0, "duration_s": 0.0}))
+        print(
+            json.dumps(
+                {
+                    "result": "fail",
+                    "reason": "interrupted",
+                    "max_alt_error_m": 0.0,
+                    "max_xy_drift_m": 0.0,
+                    "duration_s": 0.0,
+                }
+            )
+        )
         return 1
     out = {
         "result": "pass" if v.passed else "fail",

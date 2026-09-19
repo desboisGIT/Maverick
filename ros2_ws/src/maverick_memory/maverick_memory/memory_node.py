@@ -83,7 +83,7 @@ class MemoryNode(Node):
         self.create_subscription(Image, T.CAM_SEMANTIC, lambda m: self._feed("semantic", m), q)
         self.create_subscription(Image, T.CAM_DEPTH, lambda m: self._feed("depth", m), q)
         self.create_subscription(PoseStamped, T.CAM_POSE, lambda m: self._feed("pose", m), q)
-        for qos in (q, LATCHED):
+        for qos in (q,):  # sensor-data QoS only (see mapping_node)
             self.create_subscription(CameraInfo, T.CAM_INFO, self._on_info, qos)
         self.create_subscription(OccupancyGrid, T.MAP_GRID, self._on_grid, LATCHED)
         self.create_subscription(String, T.MEM_QUERY, self._on_query, RELIABLE)

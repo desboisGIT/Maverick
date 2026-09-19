@@ -87,6 +87,9 @@ services:
   host:
     <<: *maverick
     command: ["host-entrypoint.sh"]
+    volumes:
+      - ..:/maverick
+      - ../docker/host-entrypoint.sh:/usr/local/bin/host-entrypoint.sh:ro   # image copy may be stale
     stop_grace_period: 5s
     cap_add: [NET_ADMIN]
     environment:

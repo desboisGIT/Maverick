@@ -170,7 +170,6 @@ def test_arm_rejected_times_out():
     assert m.result == "arm_rejected"
 
 
-
 def test_goal_yaw_is_kept_until_the_next_goal_with_a_yaw():
     s = Sim(hover_seconds=100.0)
     s.run(8)
