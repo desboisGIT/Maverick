@@ -12,7 +12,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff pytest
+      - run: pip install ruff pytest "numpy>=2,<3"
       # Simulation runs (Gazebo/PX4/ROS 2 in Docker) are added to CI later.
       - run: ruff check .
       - run: python -m pytest
