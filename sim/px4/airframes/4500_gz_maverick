@@ -38,6 +38,23 @@ param set-default MPC_ACC_HOR 1.5
 param set-default MPC_Z_VEL_MAX_UP 1.0
 param set-default MPC_Z_VEL_MAX_DN 0.7
 
+# --- Take-off / landing drift (SITL, textured world, Gazebo ground truth at 10 Hz) -------
+# Measured before: every take-off+land cycle shifted the height origin by -0.15 to -0.17 m
+# (hover height above the floor shrank 1.5 -> 0.9 m over 5 flights at the same z setpoint).
+# Cause: EKF2_MIN_RNG is the range the terrain estimator assumes while on the ground (default
+# 0.01 m) but the LW20 reads 0.17 m at rest. At lift-off dist_bottom jumped to 0.02 m and the
+# 0.15 m mismatch was then absorbed into z, once per flight. Setting it to the real resting
+# reading: height-origin drift -0.165 -> -0.01..+0.01 m per cycle (7 runs).
+param set-default EKF2_MIN_RNG 0.17
+# Flow rotation compensation from PX4's own gyro instead of the one in the flow message.
+# Weak evidence (runs are noisy, see README): estimate error per cycle 0.05-0.4 m with it vs
+# 0.03-0.84 m without; kept because it is the conservative setting, not because it was proven.
+param set-default EKF2_OF_GYR_SRC 1
+# Measured: with the default 3 s thrust ramp the drone sat on the floor 1.9-4.7 s with the
+# controllers already active (land detector says in-air) and then jumped sideways at lift-off.
+# A 0.5 s ramp cut that to about 1.2 s and the lateral jump with it (see README table).
+param set-default MPC_TKO_RAMP_T 0.5
+
 # --- Geofence --------------------------------------------------------------
 # Measured: GF_MAX_HOR_DIST 2 with GF_ACTION 2 did NOT trigger when the vehicle
 # flew 4 m away. PX4's geofence uses the global position, which does not exist
