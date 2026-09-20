@@ -55,6 +55,7 @@ services:
       # (sim/worlds/textured.sdf); generated flats: PX4_GZ_WORLDS=/maverick/sim/worlds/generated
       # PX4_GZ_WORLD=apt_<seed> PX4_GZ_MODEL_POSE="x,y,0,0,0,yaw" (referee.s3 sets all three).
       PX4_GZ_WORLDS: "${PX4_GZ_WORLDS:-/maverick/sim/worlds}"
+      MAVERICK_EV_CTRL: "${MAVERICK_EV_CTRL:-0}"   # EKF2_EV_CTRL: 9 = vision position + yaw (S3 runner)
       PX4_GZ_MODEL_POSE: "${PX4_GZ_MODEL_POSE:-}"   # empty: PX4 spawns at the world origin
       ROS_DOMAIN_ID: "${PX4_DDS_DOMAIN_ID:-1}"   # rcS copies it to UXRCE_DDS_DOM_ID
       GZ_IP: 10.231.3.2                # Gazebo transport on `world`, so the referee can see it

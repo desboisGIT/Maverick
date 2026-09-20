@@ -44,7 +44,7 @@ TELEMETRY = (
 
 
 # External vision into PX4's EKF (uORB vehicle_visual_odometry). Topic name as in v1.17.0's
-# dds_topics.yaml; the _v1 suffix is checked against the live uXRCE log in the S3b run.
+# dds_topics.yaml; no _v1 suffix (checked on the live uXRCE topic list).
 VISION_TOPIC = os.environ.get("VISION_TOPIC", "/fmu/in/vehicle_visual_odometry")
 
 

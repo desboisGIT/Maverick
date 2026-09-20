@@ -45,12 +45,15 @@ The drone explores an unseen generated apartment on its own, builds a 3D map, fi
 
 The camera is part of the drone, so the sensor path mirrors hardware: Gazebo renders in the `sim` container ("the camera"), a small camera driver there sends frames to the `bridge` container over the `drone` network (standing in for the USB cable; plain length-prefixed TCP, no Gazebo transport and no ground truth on that network), and the bridge relay publishes them to the host through Zenoh.
 
-| Topic (host side) | Type | Rate | Notes |
+| Topic | Type | Rate | Notes |
 |---|---|---|---|
-| `/maverick/camera/rgb/compressed` | `sensor_msgs/CompressedImage` (JPEG) | 5 Hz | 640x480 |
-| `/maverick/camera/depth` | `sensor_msgs/Image` `16UC1` (mm, 0 = invalid) | 5 Hz | 160x120, same stamp as RGB |
-| `/maverick/camera/semantic` | `sensor_msgs/Image` `mono8` (worldgen class ids) | 5 Hz | 160x120, **simulation only**: feeds the simulated detector, does not exist on hardware |
-| `/maverick/camera/info` | `sensor_msgs/CameraInfo` | latched / 1 Hz | intrinsics for the 160x120 depth/semantic images; RGB intrinsics scale by 4 |
-| `/maverick/camera/pose` | `geometry_msgs/PoseStamped` | 5 Hz | camera optical-frame pose in the map frame (ENU), PX4 estimate at frame time, computed on the bridge from vehicle_local_position + vehicle_attitude + the fixed camera mount |
+| `/maverick/camera/rgb/compressed` | `sensor_msgs/CompressedImage` (JPEG) | 10 Hz | 320x240 |
+| `/maverick/camera/depth/png` | `CompressedImage`, format `16UC1; png` (lossless, mm, 0 = invalid) | 10 Hz | 320x240, registered with RGB, same stamp |
+| `/maverick/camera/semantic/png` | `CompressedImage`, format `mono8; png` (worldgen class ids) | 10 Hz | 160x120, **simulation only** |
+| `/maverick/camera/info` | `sensor_msgs/CameraInfo` | 10 Hz | intrinsics of the 320x240 images; the 160x120 semantic image scales by 1/2 |
+| `/maverick/camera/pose` | `geometry_msgs/PoseStamped` | 10 Hz | camera optical-frame pose in the map frame (ENU), PX4 estimate at frame time, computed on the bridge |
+| `/maverick/vision/odometry` | `nav_msgs/Odometry` (host -> bridge, best-effort) | ~10 Hz | body (FLU) pose in `map` (ENU), stamp = camera frame stamp; the relay drops it when older than 200 ms and converts to `px4_msgs/VehicleOdometry` on `/fmu/in/vehicle_visual_odometry` |
 
-All five carry the same `header.stamp` per frame (bridge wall clock at receipt). Frame ids: `map`, `camera_optical`. Host nodes: `mapping_node` (VoxelMap, frontiers, 2D grid), `memory_node` (simulated detector → SceneGraph), `explore` skill node (frontier exploration through `/maverick/flight/goal`), `gateway` (websocket per docs/gateway-events.md).
+Measured bandwidth (camera, bridge to host): about 15 kB per frame, 1.1 Mbit/s at 9 Hz [F], far below the ~10 Mbit/s budget (depth PNG of the generated apartments is only a few kB). Raw images exist only on the host: `maverick_vo/camera_unpack` decodes them to `/maverick/camera/{rgb,depth,semantic}` (host-local, not in the Zenoh lists), which mapping, memory and the odometry read. Details of the odometry: sim/px4/README.md "Visual odometry".
+
+The camera topics carry the same `header.stamp` per frame (bridge wall clock at receipt). Frame ids: `map`, `camera_optical`. Host nodes: `mapping_node` (VoxelMap, frontiers, 2D grid), `memory_node` (simulated detector → SceneGraph), `explore` skill node (frontier exploration through `/maverick/flight/goal`), `gateway` (websocket per docs/gateway-events.md).

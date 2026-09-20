@@ -98,6 +98,7 @@ def configure_stack(stack: Stack, world: dict, host_launch: str) -> None:
     stack.env["PX4_GZ_WORLDS"] = WORLDS_DIR_IN_SIM
     stack.env["PX4_GZ_MODEL_POSE"] = model_pose_env(world["manifest"])
     stack.env["MAVERICK_HOST_LAUNCH"] = host_launch
+    stack.env["MAVERICK_EV_CTRL"] = "9" if host_launch == "s3" else "0"  # vision fusion
 
 
 def in_repo(path: Path) -> str:

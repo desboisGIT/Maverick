@@ -65,7 +65,10 @@ param set-default MPC_TKO_RAMP_T 0.5
 # Flow + rangefinder stay fused: when the odometry stops (link loss, tracking lost) the EKF
 # simply carries on with flow, nothing else is switched.
 # Horizontal position (1) + yaw (8). Height stays on the rangefinder (EKF2_HGT_REF), see README.
-param set-default EKF2_EV_CTRL 9
+# Enabled per run with MAVERICK_EV_CTRL=9 (compose env; the S3 runner sets it). Default 0: with 9 and
+# no vision data flowing (S1 suite, host without odometry) 2 of 6 plain hover missions never
+# finished landing (land_timeout), with 0 all 6 passed [E, small sample].
+param set-default EKF2_EV_CTRL ${MAVERICK_EV_CTRL:-0}
 param set-default EKF2_EV_DELAY 50
 param set-default EKF2_EVP_NOISE 0.05
 param set-default EKF2_EVA_NOISE 0.05
