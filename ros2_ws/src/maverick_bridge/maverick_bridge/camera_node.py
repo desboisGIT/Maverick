@@ -14,9 +14,10 @@ zenoh-bridge-ros2dds forwards them best-effort over the wifi link:
   /maverick/camera/pose            geometry_msgs/PoseStamped, camera_optical in map (ENU)
 
 The images are forwarded exactly as the driver encoded them (no pixel work on the bridge); the
-host's camera_unpack node turns them into raw images. All five share one header.stamp (the frame's capture time on the
-shared wall clock) and the pose is the PX4 pose interpolated at that time. A frame is dropped (and counted) when
-there is no fresh PX4 pose with valid xy and z, so the host never maps against a stale pose.
+host's camera_unpack node turns them into raw images. All five share one header.stamp (the
+frame's capture time on the shared wall clock) and the pose is the PX4 pose interpolated at that
+time. A frame is dropped (and counted) when there is no fresh PX4 pose with valid xy and z, so the
+host never maps against a stale pose.
 Env: CAMERA_LISTEN (default 0.0.0.0), CAMERA_PORT (default 5600), CAMERA_MOUNT (path).
 """
 
