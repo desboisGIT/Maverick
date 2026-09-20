@@ -10,8 +10,9 @@
          Mount pose and intrinsics: keep in sync with camera_mount.json (tested).
          The link is almost massless (5 g, a bare sensor board) so flight behaviour does not
          change; PX4's x500_depth uses the 61 g OAK-D Lite instead.
-         All three sensors render 640x480; the driver downsamples depth and semantic to 160x120.
-         5 Hz keeps the render load small (S3 plan contract). -->
+         All three sensors render 320x240 at 10 Hz (RGB-D visual odometry needs a usable
+         resolution; 640x480 at 5 Hz ran the sim at real-time factor 0.62, see sim/px4/README.md);
+         the driver downsamples semantic to 160x120. -->
     <link name='camera_link'>
       <pose relative_to='base_link'>0.12 0 0.10 0 0 0</pose>
       <inertial>
@@ -26,22 +27,22 @@
         <topic>maverick/camera/rgb</topic>
         <camera>
           <horizontal_fov>1.274</horizontal_fov>
-          <image><width>640</width><height>480</height><format>R8G8B8</format></image>
+          <image><width>320</width><height>240</height><format>R8G8B8</format></image>
           <clip><near>0.1</near><far>30</far></clip>
         </camera>
         <always_on>1</always_on>
-        <update_rate>5</update_rate>
+        <update_rate>10</update_rate>
         <visualize>false</visualize>
       </sensor>
       <sensor name='depth' type='depth_camera'>
         <topic>maverick/camera/depth</topic>
         <camera>
           <horizontal_fov>1.274</horizontal_fov>
-          <image><width>640</width><height>480</height><format>R_FLOAT32</format></image>
+          <image><width>320</width><height>240</height><format>R_FLOAT32</format></image>
           <clip><near>0.2</near><far>19.1</far></clip>
         </camera>
         <always_on>1</always_on>
-        <update_rate>5</update_rate>
+        <update_rate>10</update_rate>
         <visualize>false</visualize>
       </sensor>
       <sensor name='semantic' type='segmentation'>
@@ -49,11 +50,11 @@
         <camera>
           <segmentation_type>semantic</segmentation_type>
           <horizontal_fov>1.274</horizontal_fov>
-          <image><width>640</width><height>480</height></image>
+          <image><width>320</width><height>240</height></image>
           <clip><near>0.2</near><far>19.1</far></clip>
         </camera>
         <always_on>1</always_on>
-        <update_rate>5</update_rate>
+        <update_rate>10</update_rate>
         <visualize>false</visualize>
       </sensor>
     </link>

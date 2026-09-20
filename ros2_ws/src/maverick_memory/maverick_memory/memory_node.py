@@ -110,7 +110,12 @@ class MemoryNode(Node):
         depth = depth_to_metres(depth_msg)
         sem = image_to_array(sem_msg)
         if sem.shape != depth.shape:
-            return
+            # depth is published at 2x the semantic image (320x240 vs 160x120): take every
+            # f-th pixel (nearest sample) so both share one pixel grid
+            fy, fx = depth.shape[0] // sem.shape[0], depth.shape[1] // sem.shape[1]
+            if fy < 1 or fy != fx or depth.shape[0] != fy * sem.shape[0]:
+                return
+            depth = depth[fy // 2 :: fy, fx // 2 :: fx]
         intr = intrinsics_for(self.intr, depth.shape[1], depth.shape[0])
         t_wc, r_wc = pose_to_tr(pose_msg)
         stamp = stamp_to_sec(depth_msg.header.stamp)

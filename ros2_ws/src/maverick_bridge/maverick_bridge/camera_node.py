@@ -5,13 +5,17 @@ vehicle_local_position_v1 + vehicle_attitude from the PX4 DDS domain) and the fi
 (sim/models/maverick/camera_mount.json), and publishes in the host-facing domain, where
 zenoh-bridge-ros2dds forwards them best-effort over the wifi link:
 
-  /maverick/camera/rgb/compressed  sensor_msgs/CompressedImage (JPEG, 640x480)
-  /maverick/camera/depth           sensor_msgs/Image 16UC1 mm, 0 = invalid, 160x120
-  /maverick/camera/semantic        sensor_msgs/Image mono8 class ids, 160x120 (simulation only)
-  /maverick/camera/info            sensor_msgs/CameraInfo (160x120 intrinsics)
+  /maverick/camera/rgb/compressed  sensor_msgs/CompressedImage, format "jpeg", 320x240
+  /maverick/camera/depth/png       sensor_msgs/CompressedImage, format "16UC1; png" (lossless,
+                                   mm, 0 = invalid), 320x240, registered with the RGB image
+  /maverick/camera/semantic/png    sensor_msgs/CompressedImage, format "mono8; png", 160x120
+                                   (simulation only)
+  /maverick/camera/info            sensor_msgs/CameraInfo (320x240 intrinsics)
   /maverick/camera/pose            geometry_msgs/PoseStamped, camera_optical in map (ENU)
 
-All five share one header.stamp (bridge clock at receipt). A frame is dropped (and counted) when
+The images are forwarded exactly as the driver encoded them (no pixel work on the bridge); the
+host's camera_unpack node turns them into raw images. All five share one header.stamp (bridge
+clock at receipt). A frame is dropped (and counted) when
 there is no fresh PX4 pose with valid xy and z, so the host never maps against a stale pose.
 Env: CAMERA_LISTEN (default 0.0.0.0), CAMERA_PORT (default 5600), CAMERA_MOUNT (path).
 """
@@ -31,7 +35,7 @@ from rclpy.context import Context
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import CameraInfo, CompressedImage, Image
+from sensor_msgs.msg import CameraInfo, CompressedImage
 
 from maverick_bridge import camera_protocol as proto
 from maverick_bridge.camera_pose import DEFAULT_MOUNT_PATH, CameraMount, camera_pose_enu
@@ -100,10 +104,10 @@ class CameraRelayNode(Node):
             CompressedImage, "/maverick/camera/rgb/compressed", qos_profile_sensor_data
         )
         self.pub_depth = self.create_publisher(
-            Image, "/maverick/camera/depth", qos_profile_sensor_data
+            CompressedImage, "/maverick/camera/depth/png", qos_profile_sensor_data
         )
         self.pub_sem = self.create_publisher(
-            Image, "/maverick/camera/semantic", qos_profile_sensor_data
+            CompressedImage, "/maverick/camera/semantic/png", qos_profile_sensor_data
         )
         self.pub_info = self.create_publisher(
             CameraInfo, "/maverick/camera/info", qos_profile_sensor_data
@@ -140,24 +144,22 @@ class CameraRelayNode(Node):
         (pos_ned, q) = pose
         stamp = self.get_clock().now().to_msg()
         frame_id = self.mount.frame_id
-        mw, mh = frame.map_size
+        dw, dh = frame.depth_size
 
         rgb = CompressedImage()
         rgb.header.stamp, rgb.header.frame_id = stamp, frame_id
         rgb.format = "jpeg"
         rgb.data = frame.jpeg
 
-        depth = Image()
+        depth = CompressedImage()
         depth.header.stamp, depth.header.frame_id = stamp, frame_id
-        depth.height, depth.width = mh, mw
-        depth.encoding, depth.is_bigendian, depth.step = "16UC1", 0, mw * 2
-        depth.data = frame.depth_mm
+        depth.format = "16UC1; png"
+        depth.data = frame.depth_png
 
-        sem = Image()
+        sem = CompressedImage()
         sem.header.stamp, sem.header.frame_id = stamp, frame_id
-        sem.height, sem.width = mh, mw
-        sem.encoding, sem.is_bigendian, sem.step = "mono8", 0, mw
-        sem.data = frame.semantic
+        sem.format = "mono8; png"
+        sem.data = frame.semantic_png
 
         (px, py, pz), (qw, qx, qy, qz) = camera_pose_enu(pos_ned, q, self.mount)
         ps = PoseStamped()
@@ -169,7 +171,7 @@ class CameraRelayNode(Node):
         self.pub_rgb.publish(rgb)
         self.pub_depth.publish(depth)
         self.pub_sem.publish(sem)
-        self.pub_info.publish(self.info_msg(stamp, mw, mh))
+        self.pub_info.publish(self.info_msg(stamp, dw, dh))
         self.pub_pose.publish(ps)
         self.frames_ok += 1
         return True

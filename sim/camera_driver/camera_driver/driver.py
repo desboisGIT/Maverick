@@ -1,9 +1,10 @@
 """Camera driver ("the camera hardware"): Gazebo sensor topics -> TCP stream to the bridge.
 
 Runs in the sim container. Subscribes (gz-transport, world network only) to the RGB, depth and
-semantic topics of the drone, pairs them by sim time, downsamples depth and semantic to 160x120,
-JPEG-encodes the RGB image and sends one frame per set over a length-prefixed TCP connection
-(maverick_bridge.camera_protocol) to the bridge container on the `drone` network.
+semantic topics of the drone, pairs them by sim time, downsamples semantic to 160x120, encodes
+RGB (JPEG), depth (16-bit PNG, lossless) and semantic (PNG) and sends one frame per set over a
+length-prefixed TCP connection (maverick_bridge.camera_protocol) to the bridge container on the
+`drone` network.
 
   python3 -m camera_driver.driver [--host 10.231.1.3] [--port 5600] [--dump DIR]
 
@@ -30,11 +31,11 @@ from PIL import Image as PILImage
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "ros2_ws/src/maverick_bridge"))
 
 from maverick_bridge import camera_protocol as proto  # noqa: E402
+from maverick_bridge.image_codec import encode_depth_png, encode_semantic_png  # noqa: E402
 
 from camera_driver.processing import (  # noqa: E402
     Pairer,
     depth_to_mm,
-    downsample_depth,
     downsample_semantic,
 )
 
@@ -75,7 +76,7 @@ class Streamer:
     def __init__(self, host: str | None, port: int, mount: dict, dump: Path | None) -> None:
         self.host, self.port, self.dump = host, port, dump
         self.near, self.far = mount["clip"]
-        self.map_w, self.map_h = mount["depth_size"]
+        self.sem_w, self.sem_h = mount["semantic_size"]
         self.q: queue.Queue = queue.Queue(maxsize=2)
         self.seq = 0
         self.sock: socket.socket | None = None
@@ -113,18 +114,18 @@ class Streamer:
         buf = io.BytesIO()
         PILImage.fromarray(np.ascontiguousarray(rgb)).save(buf, "JPEG", quality=JPEG_QUALITY)
         depth_mm = depth_to_mm(parts["depth"], self.near, self.far)
-        factor = depth_mm.shape[1] // self.map_w
-        depth_small = downsample_depth(depth_mm, factor)
-        sem_small = downsample_semantic(semantic_labels(parts["semantic"]), factor)
+        labels = semantic_labels(parts["semantic"])
+        sem_small = downsample_semantic(labels, labels.shape[1] // self.sem_w)
         self.seq += 1
         return proto.CameraFrame(
             seq=self.seq,
             sim_ns=t_ns,
             rgb_size=(rgb.shape[1], rgb.shape[0]),
-            map_size=(self.map_w, self.map_h),
-            depth_mm=depth_small.astype("<u2").tobytes(),
-            semantic=sem_small.tobytes(),
+            depth_size=(depth_mm.shape[1], depth_mm.shape[0]),
+            sem_size=(sem_small.shape[1], sem_small.shape[0]),
             jpeg=buf.getvalue(),
+            depth_png=encode_depth_png(depth_mm),
+            semantic_png=encode_semantic_png(sem_small),
         )
 
     def run(self) -> None:
@@ -150,22 +151,21 @@ class Streamer:
 
 
 def dump_frame(out: Path, frame: proto.CameraFrame, parts: dict) -> None:
+    from maverick_bridge.image_codec import decode_png
+
     out.mkdir(parents=True, exist_ok=True)
     stem = f"{frame.seq:04d}"
     (out / f"{stem}_rgb.jpg").write_bytes(frame.jpeg)
-    mw, mh = frame.map_size
-    depth = np.frombuffer(frame.depth_mm, dtype="<u2").reshape(mh, mw)
+    depth = decode_png(frame.depth_png, np.uint16)
     PILImage.fromarray(depth).save(out / f"{stem}_depth16.png")
-    sem = np.frombuffer(frame.semantic, dtype=np.uint8).reshape(mh, mw)
+    sem = decode_png(frame.semantic_png, np.uint8)
     PILImage.fromarray(sem).save(out / f"{stem}_semantic_ids.png")
     # colour versions for eyeballing
     scale = np.clip(depth.astype(np.float32) / 8000.0, 0, 1)
-    PILImage.fromarray((255 * (1 - scale)).astype(np.uint8)).resize(
-        (640, 480), PILImage.NEAREST
-    ).save(out / f"{stem}_depth_vis.png")
+    PILImage.fromarray((255 * (1 - scale)).astype(np.uint8)).save(out / f"{stem}_depth_vis.png")
     pal = np.random.default_rng(1).integers(40, 255, size=(256, 3), dtype=np.uint8)
     pal[0] = 0
-    PILImage.fromarray(pal[sem]).resize((640, 480), PILImage.NEAREST).save(
+    PILImage.fromarray(pal[sem]).resize((320, 240), PILImage.NEAREST).save(
         out / f"{stem}_semantic_vis.png"
     )
     print(f"[camera] dumped {stem}: classes {sorted(set(sem.flatten().tolist()))}", flush=True)

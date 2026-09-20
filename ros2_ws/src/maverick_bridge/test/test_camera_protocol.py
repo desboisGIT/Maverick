@@ -4,10 +4,10 @@ import pytest
 from maverick_bridge import camera_protocol as p
 
 
-def make_frame(seq=1, sim_ns=1_234_567_890_123, mw=4, mh=3, jpeg=b"\xff\xd8jpeg\xff\xd9"):
-    depth = b"".join((1000 + i).to_bytes(2, "little") for i in range(mw * mh))
-    sem = bytes(range(mw * mh))
-    return p.CameraFrame(seq, sim_ns, (640, 480), (mw, mh), depth, sem, jpeg)
+def make_frame(seq=1, sim_ns=1_234_567_890_123, jpeg=b"\xff\xd8jpeg\xff\xd9"):
+    return p.CameraFrame(
+        seq, sim_ns, (320, 240), (320, 240), (160, 120), jpeg, b"\x89PNGdepth", b"\x89PNGsem"
+    )
 
 
 def test_roundtrip():
@@ -18,11 +18,12 @@ def test_roundtrip():
 
 
 def test_real_sizes():
-    n = 160 * 120
-    f = p.CameraFrame(7, 5, (640, 480), (160, 120), bytes(2 * n), bytes(n), b"x" * 40000)
+    f = p.CameraFrame(
+        7, 5, (320, 240), (320, 240), (160, 120), b"x" * 15000, b"d" * 60000, b"s" * 2000
+    )
     wire = p.encode(f)
-    assert len(wire) == 4 + p.HEADER.size + 3 * n + 40000
-    assert p.decode(wire[4:]).jpeg == f.jpeg
+    assert len(wire) == 4 + p.HEADER.size + 15000 + 60000 + 2000
+    assert p.decode(wire[4:]) == f
 
 
 def test_reader_any_chunking():
@@ -61,11 +62,3 @@ def test_bad_magic_version_length():
         body = bytearray(wire[4:])
         body[-1:] = b""
         p.decode(bytes(body))
-
-
-def test_encode_rejects_wrong_plane_sizes():
-    f = make_frame()
-    with pytest.raises(p.ProtocolError):
-        p.encode(p.CameraFrame(1, 1, (640, 480), (4, 3), f.depth_mm[:-2], f.semantic, f.jpeg))
-    with pytest.raises(p.ProtocolError):
-        p.encode(p.CameraFrame(1, 1, (640, 480), (4, 3), f.depth_mm, f.semantic[:-1], f.jpeg))

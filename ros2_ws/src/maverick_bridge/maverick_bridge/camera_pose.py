@@ -94,6 +94,7 @@ class CameraMount:
     horizontal_fov: float
     rgb_size: tuple[int, int]
     depth_size: tuple[int, int]
+    semantic_size: tuple[int, int]
     clip: tuple[float, float]
     rate_hz: float
 
@@ -107,6 +108,7 @@ class CameraMount:
             horizontal_fov=float(d["horizontal_fov"]),
             rgb_size=tuple(d["rgb_size"]),  # type: ignore[arg-type]
             depth_size=tuple(d["depth_size"]),  # type: ignore[arg-type]
+            semantic_size=tuple(d["semantic_size"]),  # type: ignore[arg-type]
             clip=tuple(float(v) for v in d["clip"]),  # type: ignore[arg-type]
             rate_hz=float(d["rate_hz"]),
         )
@@ -128,3 +130,8 @@ def camera_pose_enu(
     t_ned = matvec(r_ned_frd, matvec(_FLIP, mount.xyz_flu))
     p_ned = (position_ned[0] + t_ned[0], position_ned[1] + t_ned[1], position_ned[2] + t_ned[2])
     return matvec(_NED_TO_ENU, p_ned), matrix_to_quat(r_enu_opt)
+
+
+def mount_in_body_flu(mount: CameraMount) -> tuple[Mat, Vec]:
+    """Optical frame in the FLU body frame: (rotation R_flu_opt, translation in FLU)."""
+    return matmul(rpy_to_matrix(*mount.rpy_flu), _FLU_OPT), mount.xyz_flu

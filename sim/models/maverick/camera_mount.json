@@ -4,8 +4,9 @@
   "xyz_flu": [0.12, 0.0, 0.10],
   "rpy_flu": [0.0, 0.0, 0.0],
   "horizontal_fov": 1.274,
-  "rgb_size": [640, 480],
-  "depth_size": [160, 120],
+  "rgb_size": [320, 240],
+  "depth_size": [320, 240],
+  "semantic_size": [160, 120],
   "clip": [0.2, 19.1],
-  "rate_hz": 5
+  "rate_hz": 10
 }

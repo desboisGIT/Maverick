@@ -19,7 +19,9 @@ MODEL_SDF = ROOT / "sim/models/maverick/model.sdf"
 
 
 def mount(xyz=(0.12, 0.0, 0.10), rpy=(0.0, 0.0, 0.0)) -> CameraMount:
-    return CameraMount("camera_optical", xyz, rpy, 1.274, (640, 480), (160, 120), (0.2, 19.1), 5.0)
+    return CameraMount(
+        "camera_optical", xyz, rpy, 1.274, (320, 240), (320, 240), (160, 120), (0.2, 19.1), 10.0
+    )
 
 
 def ned_attitude(roll=0.0, pitch=0.0, yaw=0.0):
@@ -105,12 +107,12 @@ def test_quaternion_roundtrip_is_unit_and_w_positive():
             assert all(abs(r1[i][j] - r2[i][j]) < 1e-9 for i in range(3) for j in range(3))
 
 
-def test_intrinsics_scale_by_four():
+def test_intrinsics_scale_by_two():
     m = mount()
     fx, fy, cx, cy = m.intrinsics(160, 120)
-    Fx, Fy, Cx, Cy = m.intrinsics(640, 480)
-    assert math.isclose(Fx, 4 * fx) and math.isclose(Cx, 4 * cx) and math.isclose(Cy, 4 * cy)
-    assert math.isclose(fx, 108.124, abs_tol=1e-3) and fx == fy
+    Fx, Fy, Cx, Cy = m.intrinsics(320, 240)
+    assert math.isclose(Fx, 2 * fx) and math.isclose(Cx, 2 * cx) and math.isclose(Cy, 2 * cy)
+    assert math.isclose(Fx, 216.248, abs_tol=1e-3) and Fx == Fy
 
 
 def test_mount_json_matches_model_sdf():
@@ -126,8 +128,10 @@ def test_mount_json_matches_model_sdf():
     assert sizes == {tuple(j["rgb_size"])}
     rates = {float(v) for v in re.findall(r"<update_rate>([^<]+)</update_rate>", sdf)}
     assert rates == {j["rate_hz"]}
-    # depth and semantic are rendered at an integer multiple of the published size
-    assert j["rgb_size"][0] % j["depth_size"][0] == 0
-    assert j["rgb_size"][0] // j["depth_size"][0] == j["rgb_size"][1] // j["depth_size"][1]
+    # depth is registered with the RGB image; semantic is rendered at that size and published
+    # at an integer fraction of it
+    assert j["depth_size"] == j["rgb_size"]
+    assert j["rgb_size"][0] % j["semantic_size"][0] == 0
+    assert j["rgb_size"][0] // j["semantic_size"][0] == j["rgb_size"][1] // j["semantic_size"][1]
     m = CameraMount.load(MOUNT_JSON)
     assert m.frame_id == "camera_optical"

@@ -8,6 +8,7 @@
         publishers: [
           "/maverick/flight/setpoint",
           "/maverick/flight/command",
+          "/maverick/vision/odometry",
         ],
         subscribers: [
           "/maverick/bridge/status",
@@ -16,8 +17,8 @@
           "/fmu/out/vehicle_land_detected",
           "/fmu/out/vehicle_command_ack",
           "/maverick/camera/rgb/compressed",
-          "/maverick/camera/depth",
-          "/maverick/camera/semantic",
+          "/maverick/camera/depth/png",
+          "/maverick/camera/semantic/png",
           "/maverick/camera/info",
           "/maverick/camera/pose",
         ],
@@ -40,7 +41,7 @@
     publication: [
       {
         messages: ["put"],
-        key_exprs: ["maverick/flight/setpoint"],
+        key_exprs: ["maverick/flight/setpoint", "maverick/vision/odometry"],
         config: { reliability: "best_effort", congestion_control: "drop" },
       },
     ],
