@@ -59,3 +59,13 @@ param set-default MPC_TKO_RAMP_T 0.5
 # Measured: GF_MAX_HOR_DIST 2 with GF_ACTION 2 did NOT trigger when the vehicle
 # flew 4 m away. PX4's geofence uses the global position, which does not exist
 # without GPS. GF_* stays disabled; the host safety gate is the geofence.
+
+# --- External vision (host-side RGB-D odometry, see sim/px4/README.md "Visual odometry") ----
+# The bridge relay forwards the host's odometry as vehicle_visual_odometry (NED, body FRD).
+# Flow + rangefinder stay fused: when the odometry stops (link loss, tracking lost) the EKF
+# simply carries on with flow, nothing else is switched.
+# Horizontal position (1) + yaw (8). Height stays on the rangefinder (EKF2_HGT_REF), see README.
+param set-default EKF2_EV_CTRL 9
+param set-default EKF2_EV_DELAY 50
+param set-default EKF2_EVP_NOISE 0.05
+param set-default EKF2_EVA_NOISE 0.05

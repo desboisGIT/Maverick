@@ -16,6 +16,9 @@ GROUND_TOL_M = 0.15
 C1_COVERAGE = 0.90
 C1_SURFACE_ERR_M = 0.10  # mean distance of occupied voxels to the nearest GT surface
 C6_RECALL = 0.95
+EST_ERR_MEAN_M = 0.15  # PX4 position estimate vs ground truth during the exploration, horizontal
+EST_ERR_MAX_M = 0.30
+EST_MIN_FLIGHT_Z = 0.4  # ground-truth height above ground below which samples are ignored
 C2_CLEAR_M = 1.0
 C2_MARGIN_M = 0.05
 BODY_RADIUS_M = 0.39  # x500 circumscribed radius
@@ -112,6 +115,53 @@ def verdict_hover(m: dict) -> Verdict:
     return Verdict(True, f"drift {m['drift_3d_m']} m, landed and disarmed", m)
 
 
+def estimate_error(
+    gt: list[dict], px4: list[dict], origin, t0: float, t1: float, ground_z: float
+) -> dict:
+    """PX4's own position estimate against ground truth over [t0, t1] (both wall-clock stamped).
+
+    `gt` rows {t, x, y, z} in the Gazebo world frame; `px4` rows {k: "pos", t, x, y, z, valid} in
+    PX4 local NED (x north, y east, z down). The estimate is converted to the map frame (ENU,
+    origin = PX4 local origin = `origin`, z up from the floor) and compared with the ground truth
+    interpolated at the estimate's own time; samples with the drone below EST_MIN_FLIGHT_Z are
+    skipped. Returns horizontal and vertical error statistics (m), or {"est_samples": 0}.
+    """
+    pts = [(r["t"], r["x"], r["y"], r["z"]) for r in gt]
+    pts.sort()
+    hs: list[float] = []
+    vs: list[float] = []
+    j = 0
+    for r in px4:
+        if r.get("k") != "pos" or not r.get("valid") or not (t0 <= r["t"] <= t1):
+            continue
+        t = r["t"]
+        while j + 1 < len(pts) and pts[j + 1][0] < t:
+            j += 1
+        if j + 1 >= len(pts) or pts[j][0] > t:
+            continue
+        a, b = pts[j], pts[j + 1]
+        w = (t - a[0]) / (b[0] - a[0]) if b[0] > a[0] else 0.0
+        gx = a[1] + w * (b[1] - a[1]) - origin[0]
+        gy = a[2] + w * (b[2] - a[2]) - origin[1]
+        gz = a[3] + w * (b[3] - a[3]) - ground_z
+        if gz < EST_MIN_FLIGHT_Z:
+            continue
+        ex, ey, ez = r["y"], r["x"], -r["z"]  # NED -> ENU
+        hs.append(math.hypot(ex - gx, ey - gy))
+        vs.append(abs(ez - gz))
+    if not hs:
+        return {"est_samples": 0}
+    hs_sorted = sorted(hs)
+    return {
+        "est_samples": len(hs),
+        "est_err_horiz_mean_m": round(sum(hs) / len(hs), 3),
+        "est_err_horiz_p95_m": round(hs_sorted[int(0.95 * (len(hs) - 1))], 3),
+        "est_err_horiz_max_m": round(hs_sorted[-1], 3),
+        "est_err_vert_mean_m": round(sum(vs) / len(vs), 3),
+        "est_err_vert_max_m": round(max(vs), 3),
+    }
+
+
 def verdict_explore(m: dict) -> Verdict:
     """C1 (coverage, collisions, surface error) and C6 (frontier recall) of one exploration."""
     fails = []
@@ -123,6 +173,11 @@ def verdict_explore(m: dict) -> Verdict:
         fails.append(f"C1 surface error {m['surface_err_mean_m']} m >= {C1_SURFACE_ERR_M} m")
     if not m["c6_recall"] >= C6_RECALL:
         fails.append(f"C6 recall {m['c6_recall']} < {C6_RECALL}")
+    if m.get("est_samples"):  # estimate-vs-ground-truth targets of the visual odometry (S3b)
+        if m["est_err_horiz_mean_m"] > EST_ERR_MEAN_M:
+            fails.append(f"estimate error mean {m['est_err_horiz_mean_m']} m > {EST_ERR_MEAN_M} m")
+        if m["est_err_horiz_max_m"] > EST_ERR_MAX_M:
+            fails.append(f"estimate error max {m['est_err_horiz_max_m']} m > {EST_ERR_MAX_M} m")
     if fails:
         return Verdict(False, "; ".join(fails), m)
     return Verdict(

@@ -33,6 +33,7 @@ from pathlib import Path
 
 from referee.s3_frames import model_pose_env
 from referee.s3_verdicts import (
+    estimate_error,
     exit_result_warning,
     goto_metrics,
     hover_metrics,
@@ -156,6 +157,22 @@ def wait_skill(stack: Stack, name: str, timeout_s: float, on_poll=None) -> dict:
             on_poll()
         time.sleep(POLL_S)
     return {**last, "state": "timeout"}
+
+
+def vision_counters(stack: Stack) -> dict | None:
+    """Bridge relay's visual-odometry counters (forwarded / dropped), read through the link."""
+    r = stack.exec(
+        "host",
+        "timeout 8 ros2 topic echo --once --qos-reliability best_effort /maverick/bridge/status "
+        "2>/dev/null | grep -E '^vision_'",
+        timeout=40,
+    )
+    out = {}
+    for line in r.stdout.splitlines():
+        k, _, v = line.partition(":")
+        if v.strip().isdigit():
+            out[k.strip()] = int(v)
+    return out or None
 
 
 def start_observers(stack: Stack, world: str):
@@ -314,6 +331,13 @@ def run_explore(stack: Stack, world: dict, out: Path, i: int, args, goto: bool) 
     raw_path.write_text(json.dumps(raw))
     metrics = score_in_tools(stack, raw_path)
     metrics.update(result)
+    spawn = world["manifest"]["spawn"]["pose"]
+    metrics.update(
+        estimate_error(
+            list(gt.rows), list(px4.rows), spawn, t_start, t_after if goto else t_end, ground_z
+        )
+    )
+    metrics["vision"] = vision_counters(stack)
     v = verdict_explore(metrics)
     rec = {"verdict": "pass" if v.passed else "fail", "reason": v.reason, "metrics": metrics}
     if goto_m is not None:

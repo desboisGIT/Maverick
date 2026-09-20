@@ -6,6 +6,7 @@ from referee import s3
 from referee.s3_frames import map_to_world, model_pose_env, spawn_origin, world_to_map
 from referee.s3_verdicts import (
     c2_required_clearance,
+    estimate_error,
     exit_result_warning,
     goto_metrics,
     hover_metrics,
@@ -72,6 +73,33 @@ def test_explore_verdict():
     assert not verdict_explore({**GOOD, "surface_err_mean_m": math.nan}).passed
     v = verdict_explore({**GOOD, "c6_recall": 0.9, "coverage": 0.5})
     assert "C6" in v.reason and "coverage" in v.reason
+
+
+def test_estimate_error_frames_and_stats():
+    # world frame: spawn at (3, 4), floor at z 0.05; drone flies +y (north) at 1 m/s, 1.25 m up
+    gt = [{"t": 100.0 + 0.05 * k, "x": 3.0, "y": 4.0 + 0.05 * k, "z": 1.30} for k in range(201)]
+    # PX4 local NED: x north = ENU y, y east = ENU x, z down; estimate lags 0.1 m behind in north
+    px4 = [
+        {"k": "pos", "t": 100.0 + 0.1 * k, "x": 0.1 * k - 0.1, "y": 0.0, "z": -1.25, "valid": True}
+        for k in range(1, 100)
+    ]
+    px4.append({"k": "pos", "t": 105.0, "x": 99.0, "y": 0.0, "z": -1.25, "valid": False})  # ignored
+    px4.append({"k": "status", "t": 105.0, "nav": 14})
+    m = estimate_error(gt, px4, (3.0, 4.0), 100.0, 110.0, ground_z=0.05)
+    assert m["est_samples"] == 99
+    assert m["est_err_horiz_mean_m"] == pytest.approx(0.1, abs=1e-3)
+    assert m["est_err_horiz_max_m"] == pytest.approx(0.1, abs=1e-3)
+    assert m["est_err_vert_max_m"] == pytest.approx(0.0, abs=1e-3)
+    # on the ground (below 0.4 m): skipped; outside the window: skipped
+    assert estimate_error(gt, px4, (3.0, 4.0), 100.0, 110.0, ground_z=1.2) == {"est_samples": 0}
+    assert estimate_error(gt, px4, (3.0, 4.0), 200.0, 210.0, ground_z=0.05) == {"est_samples": 0}
+
+
+def test_explore_verdict_includes_estimate_error_when_present():
+    ok = {**GOOD, "est_samples": 100, "est_err_horiz_mean_m": 0.1, "est_err_horiz_max_m": 0.25}
+    assert verdict_explore(ok).passed
+    assert not verdict_explore({**ok, "est_err_horiz_mean_m": 0.2}).passed
+    assert not verdict_explore({**ok, "est_err_horiz_max_m": 0.4}).passed
 
 
 def _hover_inputs(drift=0.05, landed=True, arm=1, z_end=0.02):
