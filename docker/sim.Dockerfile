@@ -140,6 +140,13 @@ RUN python3 -m pip install --no-cache-dir --break-system-packages ruff
 RUN python3 -m pip install --no-cache-dir --break-system-packages numpy pillow \
     && python3 -c "import numpy, PIL.Image; from gz.transport13 import Node; from gz.msgs10.image_pb2 import Image"
 
+# --- stage S3b: host-side RGB-D visual odometry (rtabmap) ----------------------------------
+# ros-jazzy-rtabmap-odom 0.23.13 (checked 2026-11-11, packages.ros.org Jazzy): rgbd_odometry,
+# icp_odometry, stereo_odometry. Runs in the host container, fed by the bridge's camera stream;
+# the result goes back to PX4 as external vision (docs/s3-plan.md "Visual odometry").
+RUN apt-get update && apt-get install -y --no-install-recommends ros-${ROS_DISTRO}-rtabmap-odom \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY docker/profile.d-maverick.sh /etc/profile.d/maverick.sh
 COPY docker/sim-entrypoint.sh docker/bridge-entrypoint.sh docker/host-entrypoint.sh /usr/local/bin/
 RUN chmod 0644 /etc/profile.d/maverick.sh \
