@@ -141,3 +141,14 @@ def test_seed_selection():
     assert s3.pick_seeds(ns) == [7, 8, 7]
     with pytest.raises(SystemExit):
         s3.pick_seeds(Namespace(seeds="7", seed_set="held_out", runs=None))
+
+
+def test_mocap_results_are_labelled_and_never_exit_results():
+    from referee.s3_verdicts import label_reason
+
+    assert label_reason("ok", "mocap") == "[with mocap] ok"
+    assert label_reason("ok", "flow") == "ok"
+    rows = [{"verdict": "pass", "seed_set": "held_out"}]
+    assert summarise(rows, "explore", "mocap")["exit_result"] is False
+    assert "mocap" in summarise(rows, "explore", "mocap")["label"]
+    assert summarise(rows, "explore", "flow")["exit_result"] is True

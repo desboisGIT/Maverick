@@ -69,6 +69,6 @@ param set-default MPC_TKO_RAMP_T 0.5
 # no vision data flowing (S1 suite, host without odometry) 2 of 6 plain hover missions never
 # finished landing (land_timeout), with 0 all 6 passed [E, small sample].
 param set-default EKF2_EV_CTRL ${MAVERICK_EV_CTRL:-0}
-param set-default EKF2_EV_DELAY 50
+param set-default EKF2_EV_DELAY ${MAVERICK_EV_DELAY:-40}
 param set-default EKF2_EVP_NOISE 0.05
 param set-default EKF2_EVA_NOISE 0.05

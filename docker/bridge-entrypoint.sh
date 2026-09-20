@@ -25,7 +25,7 @@ ZENOH_PID=$!
         . /etc/profile.d/maverick.sh
         sleep 2
     done
-    exec ros2 run maverick_bridge relay
+    MOCAP_LISTEN="${MOCAP_LISTEN:-10.231.1.3}" exec ros2 run maverick_bridge relay
 ) &
 
 # Camera relay: receives the camera driver's TCP stream from the sim container on the drone

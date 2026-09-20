@@ -14,6 +14,8 @@ Frame on the wire (little endian):
         B   reserved    0
         u32 seq         driver counter, wraps
         u64 sim_ns      Gazebo simulation time of the paired frames
+        d   t_wall      wall clock (s) when the driver had the full set: the capture time that
+                        the pose is looked up at (containers share the host clock)
         u16 rgb_w, rgb_h       size of the decoded JPEG
         u16 depth_w, depth_h   size of the depth image (registered with the RGB image)
         u16 sem_w, sem_h       size of the semantic image
@@ -29,8 +31,8 @@ import struct
 from dataclasses import dataclass
 
 MAGIC = b"MVCF"
-VERSION = 2
-HEADER = struct.Struct("<4sBBIQHHHHHHIII")
+VERSION = 3
+HEADER = struct.Struct("<4sBBIQdHHHHHHIII")
 LENGTH = struct.Struct("<I")
 MAX_FRAME_BYTES = 4 * 1024 * 1024
 DEFAULT_PORT = 5600
@@ -44,6 +46,7 @@ class ProtocolError(ValueError):
 class CameraFrame:
     seq: int
     sim_ns: int
+    t_wall: float
     rgb_size: tuple[int, int]  # (width, height) of the JPEG
     depth_size: tuple[int, int]
     sem_size: tuple[int, int]
@@ -59,6 +62,7 @@ def encode(frame: CameraFrame) -> bytes:
         0,
         frame.seq & 0xFFFFFFFF,
         frame.sim_ns,
+        frame.t_wall,
         *frame.rgb_size,
         *frame.depth_size,
         *frame.sem_size,
@@ -73,7 +77,9 @@ def encode(frame: CameraFrame) -> bytes:
 def decode(body: bytes) -> CameraFrame:
     if len(body) < HEADER.size:
         raise ProtocolError("frame shorter than its header")
-    magic, version, _, seq, sim_ns, rw, rh, dw, dh, sw, sh, nj, nd, ns = HEADER.unpack_from(body)
+    magic, version, _, seq, sim_ns, t_wall, rw, rh, dw, dh, sw, sh, nj, nd, ns = HEADER.unpack_from(
+        body
+    )
     if magic != MAGIC:
         raise ProtocolError(f"bad magic {magic!r}")
     if version != VERSION:
@@ -84,7 +90,7 @@ def decode(body: bytes) -> CameraFrame:
     jpeg = body[off : off + nj]
     depth = body[off + nj : off + nj + nd]
     sem = body[off + nj + nd :]
-    return CameraFrame(seq, sim_ns, (rw, rh), (dw, dh), (sw, sh), jpeg, depth, sem)
+    return CameraFrame(seq, sim_ns, t_wall, (rw, rh), (dw, dh), (sw, sh), jpeg, depth, sem)
 
 
 class FrameReader:

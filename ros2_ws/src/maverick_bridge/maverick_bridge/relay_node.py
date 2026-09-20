@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import math
 import os
+import socket
 import sys
 import threading
+import time
 
 import rclpy
 from maverick_interfaces.msg import BridgeStatus, FlightCommand, FlightSetpoint
@@ -30,6 +32,7 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 
+from maverick_bridge import mocap_protocol
 from maverick_bridge.core import RelayCore
 from maverick_bridge.vision import VisionRelay
 
@@ -46,6 +49,21 @@ TELEMETRY = (
 # External vision into PX4's EKF (uORB vehicle_visual_odometry). Topic name as in v1.17.0's
 # dds_topics.yaml; no _v1 suffix (checked on the live uXRCE topic list).
 VISION_TOPIC = os.environ.get("VISION_TOPIC", "/fmu/in/vehicle_visual_odometry")
+
+
+MOCAP_POS_VAR = (4e-6, 4e-6, 4e-6)  # (2 mm)^2
+MOCAP_ORI_VAR = (7.6e-5, 7.6e-5, 7.6e-5)  # (0.5 deg)^2
+
+
+def mocap_listener(node: RelayNode, host: str, port: int) -> None:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((host, port))
+    while True:
+        data, _ = sock.recvfrom(256)
+        try:
+            node.on_mocap(mocap_protocol.decode(data))
+        except mocap_protocol.MocapProtocolError:
+            pass
 
 
 def stamp_to_s(stamp) -> float:
@@ -142,8 +160,10 @@ class RelayNode(Node):
             (float(pc[21]), float(pc[28]), float(pc[35])),
             (float(tc[0]), float(tc[7]), float(tc[14])),
         )
-        if out is None:
-            return
+        if out is not None:
+            self._publish_vision(out)
+
+    def _publish_vision(self, out) -> None:
         odo = VehicleOdometry()
         odo.timestamp = self._now_us()
         odo.timestamp_sample = int(out.sample_time_s * 1e6)
@@ -159,6 +179,21 @@ class RelayNode(Node):
         odo.reset_counter = 0
         odo.quality = 0
         self.px4.vision_pub.publish(odo)
+
+    def on_mocap(self, sample: mocap_protocol.MocapSample) -> None:
+        """Simulated mocap pose: same conversion, staleness rule and counters as the VO path."""
+        out = self.vision.on_odometry(
+            sample.t_s,
+            time.time(),  # wall clock: the driver stamps with the shared wall clock
+            sample.position_enu,
+            sample.quat_xyzw,
+            (math.nan, math.nan, math.nan),
+            MOCAP_POS_VAR,
+            MOCAP_ORI_VAR,
+            (0.01, 0.01, 0.01),
+        )
+        if out is not None:
+            self._publish_vision(out)
 
     def _on_command(self, msg: FlightCommand) -> None:
         spec = self.core.on_command(stamp_to_s(msg.stamp), self._now_s(), int(msg.command))
@@ -202,6 +237,16 @@ def main(argv: list[str] | None = None) -> int:
     px4_executor = SingleThreadedExecutor(context=px4_context)
     px4_executor.add_node(node.px4)
     threading.Thread(target=px4_executor.spin, daemon=True).start()
+    if os.environ.get("MOCAP_LISTEN"):  # drone-network address only; unset = no mocap input
+        threading.Thread(
+            target=mocap_listener,
+            args=(
+                node,
+                os.environ["MOCAP_LISTEN"],
+                int(os.environ.get("MOCAP_PORT", mocap_protocol.DEFAULT_PORT)),
+            ),
+            daemon=True,
+        ).start()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

@@ -41,6 +41,7 @@ cleanup() {
         sleep 0.5
     done
     pkill -TERM -f "camera_driver.driver" 2>/dev/null
+    pkill -TERM -f "mocap_driver.driver" 2>/dev/null
     pkill -TERM -f "gz sim" 2>/dev/null
     [ -n "$PX4_PID" ] && kill -KILL "$PX4_PID" 2>/dev/null
     exit "${1:-0}"
@@ -52,6 +53,13 @@ trap 'cleanup 0' TERM INT
 #    so the agent IP must already be set then: rcS applies PX4_PARAM_* before starting it.
 #    -d: no interactive pxh shell, so no TTY is needed.
 #    The binary has its rootfs baked in (build/px4_sitl_default/rootfs).
+# Localisation source: flow (default: PX4 optical flow + rangefinder only), mocap (simulated motion
+# capture pose fused as external vision), vo (host visual odometry). mocap and vo switch EV fusion on.
+export MAVERICK_LOCALISATION="${MAVERICK_LOCALISATION:-flow}"
+case "$MAVERICK_LOCALISATION" in
+    mocap|vo) export MAVERICK_EV_CTRL="${MAVERICK_EV_CTRL:-9}" ;;
+    *) export MAVERICK_EV_CTRL="${MAVERICK_EV_CTRL:-0}" ;;
+esac
 export PX4_SIM_MODEL="${PX4_SIM_MODEL:-gz_maverick}"
 export GZ_IP="${GZ_IP:-127.0.0.1}"
 cd "$PX4_BUILD/rootfs" || exit 1
@@ -89,6 +97,10 @@ PX4_PID=$!
             echo "[entrypoint] PX4 ready -> $READY_FILE"
             # Camera driver ("the camera hardware"): Gazebo sensor topics -> TCP to the bridge on
             # the drone network. Gazebo transport stays on the world network (GZ_IP).
+            if [ "$MAVERICK_LOCALISATION" = mocap ]; then
+                ( cd /maverick/sim/mocap_driver \
+                    && exec python3 -u -m mocap_driver.driver --host "${CAMERA_BRIDGE_ADDR:-10.231.1.3}" ) &
+            fi
             if [ "${CAMERA_DRIVER:-1}" = 1 ]; then
                 cd /maverick/sim/camera_driver \
                     && exec python3 -u -m camera_driver.driver --host "${CAMERA_BRIDGE_ADDR:-10.231.1.3}"

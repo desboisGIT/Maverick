@@ -55,7 +55,9 @@ services:
       # (sim/worlds/textured.sdf); generated flats: PX4_GZ_WORLDS=/maverick/sim/worlds/generated
       # PX4_GZ_WORLD=apt_<seed> PX4_GZ_MODEL_POSE="x,y,0,0,0,yaw" (referee.s3 sets all three).
       PX4_GZ_WORLDS: "${PX4_GZ_WORLDS:-/maverick/sim/worlds}"
-      MAVERICK_EV_CTRL: "${MAVERICK_EV_CTRL:-0}"   # EKF2_EV_CTRL: 9 = vision position + yaw (S3 runner)
+      MAVERICK_LOCALISATION: "${MAVERICK_LOCALISATION:-flow}"   # flow | mocap | vo (S3 runner sets it)
+      MAVERICK_EV_DELAY: "${MAVERICK_EV_DELAY:-40}"   # EKF2_EV_DELAY ms
+      MAVERICK_EV_CTRL: "${MAVERICK_EV_CTRL:-}"   # EKF2_EV_CTRL override (default: 9 for mocap/vo, else 0)
       PX4_GZ_MODEL_POSE: "${PX4_GZ_MODEL_POSE:-}"   # empty: PX4 spawns at the world origin
       ROS_DOMAIN_ID: "${PX4_DDS_DOMAIN_ID:-1}"   # rcS copies it to UXRCE_DDS_DOM_ID
       GZ_IP: 10.231.3.2                # Gazebo transport on `world`, so the referee can see it
@@ -76,6 +78,9 @@ services:
   bridge:
     <<: *maverick
     command: ["bridge-entrypoint.sh"]
+    volumes:
+      - ..:/maverick
+      - ../docker/bridge-entrypoint.sh:/usr/local/bin/bridge-entrypoint.sh:ro   # image copy may be stale
     environment:
       <<: *maverick-env
       PX4_DDS_DOMAIN_ID: "${PX4_DDS_DOMAIN_ID:-1}"   # domain of the XRCE agent / PX4 side
@@ -97,6 +102,7 @@ services:
       <<: *maverick-env
       MAVERICK_HOST_LAUNCH: "${MAVERICK_HOST_LAUNCH:-none}"   # "s3" starts the S3 host stack
       MAVERICK_LAUNCH_ARGS: "${MAVERICK_LAUNCH_ARGS:-}"
+      MAVERICK_LOCALISATION: "${MAVERICK_LOCALISATION:-flow}"
     ports:
       - "127.0.0.1:8765:8765"          # Mission Console gateway (websocket), localhost only
     networks:

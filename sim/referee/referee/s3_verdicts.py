@@ -240,7 +240,12 @@ def exit_result_warning(scenario: str, seed_sets: set[str]) -> str | None:
     return None
 
 
-def summarise(rows: list[dict], scenario: str) -> dict:
+def label_reason(reason: str, localisation: str) -> str:
+    """Results that used ground truth for localisation are labelled; they are never exit results."""
+    return f"[with mocap] {reason}" if localisation == "mocap" else reason
+
+
+def summarise(rows: list[dict], scenario: str, localisation: str = "flow") -> dict:
     ran = [r for r in rows if r["verdict"] in ("pass", "fail")]
     sets = {r["seed_set"] for r in rows}
     out = {
@@ -251,8 +256,12 @@ def summarise(rows: list[dict], scenario: str) -> dict:
         "error": sum(r["verdict"] == "error" for r in rows),
         "scored": len(ran),
         "seed_sets": sorted(sets),
-        "exit_result": scenario not in CAPABILITY_SCENARIOS or sets == {"held_out"},
+        "localisation": localisation,
+        "exit_result": localisation != "mocap"
+        and (scenario not in CAPABILITY_SCENARIOS or sets == {"held_out"}),
     }
+    if localisation == "mocap":
+        out["label"] = "with mocap (simulated motion capture): not an S3 exit result"
     warn = exit_result_warning(scenario, sets)
     if warn:
         out["warning"] = warn

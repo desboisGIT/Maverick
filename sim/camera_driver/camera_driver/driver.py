@@ -84,16 +84,16 @@ class Streamer:
         self.last_connect_try = 0.0
         self.t_first: float | None = None
 
-    def offer(self, t_ns: int, parts: dict) -> None:
+    def offer(self, t_ns: int, parts: dict, t_wall: float) -> None:
         try:
-            self.q.put_nowait((t_ns, parts))
+            self.q.put_nowait((t_ns, parts, t_wall))
         except queue.Full:  # worker is behind: replace the oldest frame
             try:
                 self.q.get_nowait()
             except queue.Empty:
                 pass
             self.dropped += 1
-            self.q.put_nowait((t_ns, parts))
+            self.q.put_nowait((t_ns, parts, t_wall))
 
     def _connect(self) -> None:
         now = time.monotonic()
@@ -109,7 +109,7 @@ class Streamer:
         except OSError:
             pass
 
-    def build(self, t_ns: int, parts: dict) -> proto.CameraFrame:
+    def build(self, t_ns: int, parts: dict, t_wall: float) -> proto.CameraFrame:
         rgb = parts["rgb"]
         buf = io.BytesIO()
         PILImage.fromarray(np.ascontiguousarray(rgb)).save(buf, "JPEG", quality=JPEG_QUALITY)
@@ -120,6 +120,7 @@ class Streamer:
         return proto.CameraFrame(
             seq=self.seq,
             sim_ns=t_ns,
+            t_wall=t_wall,
             rgb_size=(rgb.shape[1], rgb.shape[0]),
             depth_size=(depth_mm.shape[1], depth_mm.shape[0]),
             sem_size=(sem_small.shape[1], sem_small.shape[0]),
@@ -130,8 +131,8 @@ class Streamer:
 
     def run(self) -> None:
         while True:
-            t_ns, parts = self.q.get()
-            frame = self.build(t_ns, parts)
+            t_ns, parts, t_wall = self.q.get()
+            frame = self.build(t_ns, parts, t_wall)
             if self.dump is not None and self.seq % 5 == 1:
                 dump_frame(self.dump, frame, parts)
             self._connect()
@@ -215,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                 if got:
                     counts["paired"] += 1
             if got:
-                streamer.offer(got[0], got[1])
+                streamer.offer(got[0], got[1], time.time())
 
         return cb
 

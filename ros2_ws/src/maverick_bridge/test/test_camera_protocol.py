@@ -6,7 +6,7 @@ from maverick_bridge import camera_protocol as p
 
 def make_frame(seq=1, sim_ns=1_234_567_890_123, jpeg=b"\xff\xd8jpeg\xff\xd9"):
     return p.CameraFrame(
-        seq, sim_ns, (320, 240), (320, 240), (160, 120), jpeg, b"\x89PNGdepth", b"\x89PNGsem"
+        seq, sim_ns, 1.5e9, (320, 240), (320, 240), (160, 120), jpeg, b"\x89PNGdepth", b"\x89PNGsem"
     )
 
 
@@ -19,7 +19,7 @@ def test_roundtrip():
 
 def test_real_sizes():
     f = p.CameraFrame(
-        7, 5, (320, 240), (320, 240), (160, 120), b"x" * 15000, b"d" * 60000, b"s" * 2000
+        7, 5, 2.5, (320, 240), (320, 240), (160, 120), b"x" * 15000, b"d" * 60000, b"s" * 2000
     )
     wire = p.encode(f)
     assert len(wire) == 4 + p.HEADER.size + 15000 + 60000 + 2000

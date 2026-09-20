@@ -8,6 +8,6 @@ line-length = 100
 select = ["E", "F", "W", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
-testpaths = ["ros2_ws/src", "sim/referee", "sim/camera_driver", "sim/worldgen/tests"]
+testpaths = ["ros2_ws/src", "sim/referee", "sim/camera_driver", "sim/mocap_driver", "sim/worldgen/tests"]
 python_files = ["test_*.py"]
 addopts = "-q --import-mode=importlib"

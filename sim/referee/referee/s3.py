@@ -37,6 +37,7 @@ from referee.s3_verdicts import (
     exit_result_warning,
     goto_metrics,
     hover_metrics,
+    label_reason,
     seed_set_of,
     summarise,
     verdict_explore,
@@ -48,6 +49,7 @@ from referee.stack import ROOT, Stack
 sys.path.insert(0, str(ROOT / "sim" / "worldgen"))
 
 SCENARIOS = ("hover", "explore", "goto_room")
+LOCALISATIONS = ("flow", "mocap", "vo")
 WORLDS_DIR = ROOT / "sim" / "worlds" / "generated"
 WORLDS_DIR_IN_SIM = "/maverick/sim/worlds/generated"
 FLIGHT_BIN = "/maverick/ros2_ws/install/maverick_flight/lib/maverick_flight"
@@ -93,12 +95,14 @@ def make_world(seed: int) -> dict:
     return {"name": world.name, "manifest": world.manifest, "sdf": sdf, "manifest_path": man}
 
 
-def configure_stack(stack: Stack, world: dict, host_launch: str) -> None:
+def configure_stack(
+    stack: Stack, world: dict, host_launch: str, localisation: str = "flow"
+) -> None:
+    stack.env["MAVERICK_LOCALISATION"] = localisation
     stack.env["PX4_GZ_WORLD"] = world["name"]
     stack.env["PX4_GZ_WORLDS"] = WORLDS_DIR_IN_SIM
     stack.env["PX4_GZ_MODEL_POSE"] = model_pose_env(world["manifest"])
     stack.env["MAVERICK_HOST_LAUNCH"] = host_launch
-    stack.env["MAVERICK_EV_CTRL"] = "9" if host_launch == "s3" else "0"  # vision fusion
 
 
 def in_repo(path: Path) -> str:
@@ -359,7 +363,9 @@ def run_explore(stack: Stack, world: dict, out: Path, i: int, args, goto: bool) 
 
 def run_one(stack: Stack, scenario: str, seed: int, out: Path, i: int, args) -> dict:
     world = make_world(seed)
-    configure_stack(stack, world, "none" if scenario == "hover" else "s3")
+    configure_stack(
+        stack, world, "none" if scenario == "hover" else "s3", getattr(args, "localisation", "flow")
+    )
     stack.restart()
     try:
         if scenario == "hover":
@@ -402,6 +408,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--runs", type=int, help="number of runs (default: one per seed)")
     ap.add_argument("--budget", type=float, default=360.0, help="explore budget, s")
     ap.add_argument("--room", default="kitchen", help="goto_room target type")
+    ap.add_argument(
+        "--localisation",
+        choices=LOCALISATIONS,
+        default="flow",
+        help="position source: flow (PX4 flow only), mocap (simulated motion capture, NOT an "
+        "exit result), vo (host visual odometry)",
+    )
     ap.add_argument("--no-build", action="store_true", help="skip colcon build")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
@@ -432,9 +445,11 @@ def main(argv: list[str] | None = None) -> int:
                 "run": i,
                 "seed": seed,
                 "seed_set": seed_set_of(seed),
+                "localisation": args.localisation,
                 "duration_s": round(time.time() - t_run, 1),
                 **rec,
             }
+            rec["reason"] = label_reason(rec["reason"], args.localisation)
             rows.append(rec)
             with (out / "results.jsonl").open("a") as f:
                 f.write(json.dumps(rec, allow_nan=True) + "\n")
@@ -442,7 +457,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{args.scenario} seed {seed}: {rec['verdict'].upper()} {rec['reason']}", flush=True
             )
     finally:
-        summary = summarise(rows, args.scenario)
+        summary = summarise(rows, args.scenario, args.localisation)
         summary["wall_s"] = round(time.time() - t_suite)
         (out / "summary.json").write_text(json.dumps(summary, indent=2))
         stack.down()

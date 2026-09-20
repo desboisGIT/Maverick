@@ -14,8 +14,8 @@ zenoh-bridge-ros2dds forwards them best-effort over the wifi link:
   /maverick/camera/pose            geometry_msgs/PoseStamped, camera_optical in map (ENU)
 
 The images are forwarded exactly as the driver encoded them (no pixel work on the bridge); the
-host's camera_unpack node turns them into raw images. All five share one header.stamp (bridge
-clock at receipt). A frame is dropped (and counted) when
+host's camera_unpack node turns them into raw images. All five share one header.stamp (the frame's capture time on the
+shared wall clock) and the pose is the PX4 pose interpolated at that time. A frame is dropped (and counted) when
 there is no fresh PX4 pose with valid xy and z, so the host never maps against a stale pose.
 Env: CAMERA_LISTEN (default 0.0.0.0), CAMERA_PORT (default 5600), CAMERA_MOUNT (path).
 """
@@ -27,8 +27,10 @@ import socket
 import sys
 import threading
 import time
+from collections import deque
 
 import rclpy
+from builtin_interfaces.msg import Time
 from geometry_msgs.msg import PoseStamped
 from px4_msgs.msg import VehicleAttitude, VehicleLocalPosition
 from rclpy.context import Context
@@ -44,31 +46,60 @@ POSE_MAX_AGE_S = 0.5
 
 
 class PoseCache:
-    """Latest PX4 position and attitude with their arrival times (monotonic clock)."""
+    """Recent PX4 position and attitude samples, looked up by capture time (wall clock).
 
-    def __init__(self) -> None:
+    The image was rendered `latency` before it reached the bridge (render, encode, TCP): using the
+    newest pose would shift every depth point by speed x latency (about 0.07 m at 1 m/s) and by
+    yaw rate x latency x range when turning. The pose at the frame's capture time is interpolated
+    instead (linear position, normalised linear quaternion).
+    """
+
+    def __init__(self, history_s: float = 2.0) -> None:
         self._lock = threading.Lock()
-        self._pos: tuple[float, float, float] | None = None
-        self._pos_t = 0.0
-        self._q: tuple[float, float, float, float] | None = None
-        self._q_t = 0.0
+        self._hist_s = history_s
+        self._pos: deque = deque()  # (t, (x, y, z)) valid positions only
+        self._q: deque = deque()  # (t, (w, x, y, z))
+        self._pos_invalid_t = 0.0
 
     def set_position(self, x: float, y: float, z: float, valid: bool, now: float) -> None:
         with self._lock:
-            self._pos = (x, y, z) if valid else None
-            self._pos_t = now
+            if valid:
+                self._pos.append((now, (x, y, z)))
+                while self._pos and now - self._pos[0][0] > self._hist_s:
+                    self._pos.popleft()
+            else:
+                self._pos.clear()
 
     def set_attitude(self, q: tuple[float, float, float, float], now: float) -> None:
         with self._lock:
-            self._q, self._q_t = q, now
+            self._q.append((now, q))
+            while self._q and now - self._q[0][0] > self._hist_s:
+                self._q.popleft()
 
-    def get(self, now: float, max_age: float = POSE_MAX_AGE_S):
+    @staticmethod
+    def _interp(hist: deque, t: float, hold_s: float):
+        if not hist or t < hist[0][0] - 1e-6:
+            return None
+        if t >= hist[-1][0]:
+            return hist[-1][1] if t - hist[-1][0] <= hold_s else None
+        prev = hist[0]
+        for cur in hist:
+            if cur[0] >= t:
+                span = cur[0] - prev[0]
+                w = 0.0 if span <= 0 else (t - prev[0]) / span
+                return tuple(a + w * (b - a) for a, b in zip(prev[1], cur[1], strict=True))
+            prev = cur
+        return None
+
+    def at(self, t: float, hold_s: float = POSE_MAX_AGE_S):
+        """(position NED, quaternion wxyz) at wall time t, or None without fresh enough data."""
         with self._lock:
-            if self._pos is None or self._q is None:
-                return None
-            if now - self._pos_t > max_age or now - self._q_t > max_age:
-                return None
-            return self._pos, self._q
+            p = self._interp(self._pos, t, hold_s)
+            q = self._interp(self._q, t, hold_s)
+        if p is None or q is None:
+            return None
+        n = sum(c * c for c in q) ** 0.5
+        return p, tuple(c / n for c in q)
 
 
 class Px4SideNode(Node):
@@ -84,14 +115,14 @@ class Px4SideNode(Node):
                 float(m.y),
                 float(m.z),
                 bool(m.xy_valid and m.z_valid),
-                time.monotonic(),
+                time.time(),
             ),
             qos_profile_sensor_data,
         )
         self.create_subscription(
             VehicleAttitude,
             "/fmu/out/vehicle_attitude",
-            lambda m: cache.set_attitude(tuple(float(v) for v in m.q), time.monotonic()),
+            lambda m: cache.set_attitude(tuple(float(v) for v in m.q), time.time()),
             qos_profile_sensor_data,
         )
 
@@ -137,12 +168,12 @@ class CameraRelayNode(Node):
         return m
 
     def on_frame(self, frame: proto.CameraFrame) -> bool:
-        pose = self.cache.get(time.monotonic())
+        pose = self.cache.at(frame.t_wall)
         if pose is None:
             self.frames_no_pose += 1
             return False
         (pos_ned, q) = pose
-        stamp = self.get_clock().now().to_msg()
+        stamp = Time(sec=int(frame.t_wall), nanosec=int((frame.t_wall % 1.0) * 1e9))  # capture time
         frame_id = self.mount.frame_id
         dw, dh = frame.depth_size
 
