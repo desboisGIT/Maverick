@@ -14,6 +14,7 @@ import threading
 
 import rclpy
 from maverick_interfaces.msg import BridgeStatus, FlightCommand, FlightSetpoint
+from nav_msgs.msg import Odometry
 from px4_msgs.msg import (
     OffboardControlMode,
     TrajectorySetpoint,
@@ -21,6 +22,7 @@ from px4_msgs.msg import (
     VehicleCommandAck,
     VehicleLandDetected,
     VehicleLocalPosition,
+    VehicleOdometry,
     VehicleStatus,
 )
 from rclpy.context import Context
@@ -29,6 +31,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 
 from maverick_bridge.core import RelayCore
+from maverick_bridge.vision import VisionRelay
 
 # PX4 telemetry that crosses the link (docs/s1-plan.md): read in the PX4 domain, republished
 # under the same names in the host-facing domain, where zenoh-bridge-ros2dds picks it up.
@@ -38,6 +41,11 @@ TELEMETRY = (
     ("/fmu/out/vehicle_land_detected", VehicleLandDetected),
     ("/fmu/out/vehicle_command_ack", VehicleCommandAck),
 )
+
+
+# External vision into PX4's EKF (uORB vehicle_visual_odometry). Topic name as in v1.17.0's
+# dds_topics.yaml; the _v1 suffix is checked against the live uXRCE log in the S3b run.
+VISION_TOPIC = os.environ.get("VISION_TOPIC", "/fmu/in/vehicle_visual_odometry")
 
 
 def stamp_to_s(stamp) -> float:
@@ -58,6 +66,7 @@ class TelemetryNode(Node):
         )
         self.sp_pub = self.create_publisher(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", 10)
         self.cmd_pub = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", 10)
+        self.vision_pub = self.create_publisher(VehicleOdometry, VISION_TOPIC, 10)
 
 
 class RelayNode(Node):
@@ -65,6 +74,7 @@ class RelayNode(Node):
         super().__init__("maverick_bridge_relay")
         self.px4: TelemetryNode | None = None
         self.core = RelayCore()
+        self.vision = VisionRelay()
         self.create_subscription(
             FlightSetpoint, "/maverick/flight/setpoint", self._on_setpoint, qos_profile_sensor_data
         )
@@ -73,6 +83,9 @@ class RelayNode(Node):
             "/maverick/flight/command",
             self._on_command,
             QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE),
+        )
+        self.create_subscription(
+            Odometry, "/maverick/vision/odometry", self._on_vision, qos_profile_sensor_data
         )
         self._telemetry_pubs = {
             topic: self.create_publisher(msg_type, topic, qos_profile_sensor_data)
@@ -116,6 +129,37 @@ class RelayNode(Node):
         sp.yaw = float(out.yaw) if math.isfinite(out.yaw) else math.nan
         self.px4.sp_pub.publish(sp)
 
+    def _on_vision(self, msg: Odometry) -> None:
+        pc, tc = msg.pose.covariance, msg.twist.covariance
+        p, q, v = msg.pose.pose.position, msg.pose.pose.orientation, msg.twist.twist.linear
+        out = self.vision.on_odometry(
+            stamp_to_s(msg.header.stamp),
+            self._now_s(),
+            (float(p.x), float(p.y), float(p.z)),
+            (float(q.x), float(q.y), float(q.z), float(q.w)),
+            (float(v.x), float(v.y), float(v.z)),
+            (float(pc[0]), float(pc[7]), float(pc[14])),
+            (float(pc[21]), float(pc[28]), float(pc[35])),
+            (float(tc[0]), float(tc[7]), float(tc[14])),
+        )
+        if out is None:
+            return
+        odo = VehicleOdometry()
+        odo.timestamp = self._now_us()
+        odo.timestamp_sample = int(out.sample_time_s * 1e6)
+        odo.pose_frame = VehicleOdometry.POSE_FRAME_NED
+        odo.position = [float(c) for c in out.position_ned]
+        odo.q = [float(c) for c in out.q_frd_ned]
+        odo.velocity_frame = VehicleOdometry.VELOCITY_FRAME_BODY_FRD
+        odo.velocity = [float(c) for c in out.velocity_frd]
+        odo.angular_velocity = [math.nan] * 3
+        odo.position_variance = [float(c) for c in out.position_var]
+        odo.orientation_variance = [float(c) for c in out.orientation_var]
+        odo.velocity_variance = [float(c) for c in out.velocity_var]
+        odo.reset_counter = 0
+        odo.quality = 0
+        self.px4.vision_pub.publish(odo)
+
     def _on_command(self, msg: FlightCommand) -> None:
         spec = self.core.on_command(stamp_to_s(msg.stamp), self._now_s(), int(msg.command))
         if spec is None:
@@ -143,6 +187,9 @@ class RelayNode(Node):
         msg.commands_forwarded = k.commands_forwarded
         msg.commands_dropped_stale = k.commands_dropped_stale
         msg.last_setpoint_age_ms = float(k.last_setpoint_age_ms)
+        msg.vision_forwarded = self.vision.counters.forwarded
+        msg.vision_dropped_stale = self.vision.counters.dropped_stale
+        msg.vision_dropped_invalid = self.vision.counters.dropped_invalid
         self._status_pub.publish(msg)
 
 
