@@ -21,7 +21,8 @@ _NB = [(-1, -1, _SQ2), (-1, 0, 1.0), (-1, 1, _SQ2), (0, -1, 1.0), (0, 1, 1.0),
 class PlannerConfig:
     robot_radius: float = 0.39  # x500 circumscribed radius
     squeeze_radius: float | None = None  # optional retry radius when nothing is reachable
-    margin: float = 0.10  # voxel quantisation (res / 2) + tracking residual
+    # voxel quantisation (res / 2) + map and tracking residual; 0.10 let the drone clip door frames
+    margin: float = 0.16
     los_extra: float = 0.0  # extra clearance demanded of straight-line shortcuts
     unknown_radius: float = 0.3  # keep this far from cells never observed (walls may hide there)
     soft_width: float = 0.6  # clearance cost acts this far beyond the hard inflation

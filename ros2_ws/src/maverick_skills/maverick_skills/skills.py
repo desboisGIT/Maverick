@@ -33,7 +33,9 @@ XY = tuple[float, float]
 class SkillConfig:
     altitude: float = 1.2
     speed: float = 0.8  # goto speed handed to the flight client (it caps at its own limit)
-    arrive_radius: float = 0.2  # waypoint counts as reached (flight setpoint is already there)
+    # waypoint counts as reached; corners are cut by up to this much, while the path clears
+    # obstacles by only robot_radius + margin (0.2 clipped door frames)
+    arrive_radius: float = 0.1
     stuck_s: float = 12.0  # no progress of `min_progress` towards the waypoint for this long
     min_progress: float = 0.15
     replan_s: float = 3.0
