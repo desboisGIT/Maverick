@@ -147,6 +147,10 @@ RUN python3 -m pip install --no-cache-dir --break-system-packages numpy pillow \
 RUN apt-get update && apt-get install -y --no-install-recommends ros-${ROS_DISTRO}-rtabmap-odom \
     && rm -rf /var/lib/apt/lists/*
 
+# --- stage S4a: agent (Claude backend; imported lazily, the scripted backend needs nothing) ---
+RUN python3 -m pip install --no-cache-dir --break-system-packages anthropic \
+    && python3 -c "import anthropic"
+
 COPY docker/profile.d-maverick.sh /etc/profile.d/maverick.sh
 COPY docker/sim-entrypoint.sh docker/bridge-entrypoint.sh docker/host-entrypoint.sh /usr/local/bin/
 RUN chmod 0644 /etc/profile.d/maverick.sh \
