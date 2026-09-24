@@ -83,3 +83,25 @@ Method, measured on a 35 s recording of the generated apartment seed 1000000 rep
 Airframe: `EKF2_EV_CTRL` = 9 (horizontal position + yaw; enabled through `MAVERICK_EV_CTRL`, the S3 runner sets it; default 0 because with 9 and no vision data 2 of 6 S1 hover missions ended in land_timeout), `EKF2_EV_DELAY` 50 ms (guess, not measured; estimator_aid_src_ev_pos showed fusion, innovation about 3 mm in hover), `EKF2_EVP_NOISE` / `EKF2_EVA_NOISE` 0.05. Velocity and EV height not used.
 
 Results (held-out seeds 1000000-1000002, explore budget 360 s, all FAIL): coverage 0.53 / 0.80 / 0.75, collisions 5 / 5 / 14, estimate error mean 0.54 / 1.59 / 3.79 m, max 5.4 / 4.7 / 10.3 m (flow only before: C1 0.44, 47 collisions). In hover the odometry error is 2 mm; in motion it is 0.03-0.1 m until the drone translates parallel to a plain wall, where the depth geometry is degenerate (a +0.9 m sideways move registered as -0.15 m); the drone then hits a door frame (doors are 1.1 m, the x500 needs 0.78 m), crashes, and the estimate after the crash is meaningless. The estimate-error numbers above therefore include the post-crash flight. Open: the forward-only camera cannot constrain sliding along plain walls (options: tilt the camera down to see floor tiles, a downward second camera, use PX4 flow velocity inside the ICP, lower speed near doors).
+
+## Simulated mocap localisation (`MAVERICK_LOCALISATION=mocap`)
+
+`sim/mocap_driver` (sim container) reads maverick_0's pose from Gazebo (about 22-30 Hz), adds 2 mm / 0.5 deg noise and +-5 ms sample-time jitter, sends UDP (`maverick_bridge.mocap_protocol`) to the relay on the drone network; the relay converts like the VO path (same staleness rule) to `/fmu/in/vehicle_visual_odometry`. Position origin = spawn (x, y from `PX4_GZ_MODEL_POSE`). `mocap` and `vo` set `EKF2_EV_CTRL` 9; `flow` keeps 0.
+
+- `EKF2_EV_DELAY` measured on seed 1000000, 60 s explore, estimate error before the first crash (p95 / mean): delay 0: 0.77 m p95; 40 ms: 0.07 m p95, 0.067 m mean; 100 ms: 1.95 m p95. Set 40 ms.
+- Hover with mocap on (3 seeds): drift 0.03-0.06 m, lands and disarms every time (the EV-without-data land_timeout does not occur when data flows).
+- Mocap stops mid-hover (driver killed): nav_state stays 14, no failsafe, altitude constant, PX4 carries on with flow and wanders 0.7 m in 29 s.
+- Camera frames now carry their capture time (`t_wall`) and the PX4 pose is interpolated at that time (it used the newest pose, a 0.07 m / several degree error while moving or turning).
+- Planner: `margin` 0.10 -> 0.16, waypoint `arrive_radius` 0.2 -> 0.1 (with accurate localisation the drone still clipped door frames at 0.34-0.38 m clearance against the 0.39 m body radius: corners were cut by up to the arrive radius and PX4 overshoots 0.15 m on turns). Door frames at 1.1 m leave only +-0.16 m of total tolerance for an x500.
+
+Results with mocap, held-out seeds 1000000-1000004, 360 s budget (NOT exit results):
+
+| seed | coverage | collisions | C6 | estimate err mean / max (m) |
+|---|---|---|---|---|
+| 1000000 | 0.83 | 2 | 1.0 | 0.025 / 0.125 |
+| 1000001 | 0.60 | 1 | 1.0 | 0.030 / 0.104 |
+| 1000002 | 0.98 | 0 (pass) | 1.0 | 0.032 / 0.149 |
+| 1000003 | 0.81 | 20 | 1.0 | 0.079 / 0.971 |
+| 1000004 | 0.82 | 5 | 1.0 | 0.044 / 0.426 |
+
+goto_room (explore first, then "kitchen"): 0/5 (explore crashes or does not find a route: 4-55 collisions). Localisation meets its target here (error <= 0.15 m before any crash); the remaining collisions are in planning and flight (door frames and corners, tracking overshoot), not localisation.
