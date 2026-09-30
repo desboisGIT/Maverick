@@ -84,12 +84,25 @@ def test_request_shape():
     assert r.stop_reason == "end_turn" and r.text() == "hi"
 
 
-def test_usage_cache_read_logged(caplog):
-    be, _ = backend([raw([], "end_turn", cache=1234)])
-    with caplog.at_level("INFO", logger="maverick_agent.claude"):
+def test_usage_cache_read_logged():
+    # Own handler, not caplog: ROS's pytest plugins in the sim image break caplog capture.
+    import logging
+
+    records: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda rec: records.append(rec.getMessage())
+    logger = logging.getLogger("maverick_agent.claude")
+    old_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        be, _ = backend([raw([], "end_turn", cache=1234)])
         r = be.create("s", [], [])
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
     assert r.usage["cache_read_input_tokens"] == 1234
-    assert "cache_read=1234" in caplog.text
+    assert any("cache_read=1234" in m for m in records)
 
 
 def test_thinking_block_preserved():
