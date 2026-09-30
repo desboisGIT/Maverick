@@ -40,4 +40,12 @@ def make_backend(cfg: AgentConfig) -> Backend:
             max_tokens=cfg.max_tokens,
             cassette_path=cfg.cassette_path or None,
         )
-    raise ValueError(f"unknown agent.backend {cfg.backend!r} (scripted | claude)")
+    if cfg.backend == "deepseek":
+        from .deepseek import DeepSeekBackend
+
+        return DeepSeekBackend(
+            model=cfg.model if cfg.model.startswith("deepseek") else "deepseek-flash",
+            max_tokens=min(cfg.max_tokens, 4096),
+            cassette_path=cfg.cassette_path or None,
+        )
+    raise ValueError(f"unknown agent.backend {cfg.backend!r} (scripted | claude | deepseek)")
