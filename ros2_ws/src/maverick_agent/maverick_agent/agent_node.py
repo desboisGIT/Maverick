@@ -1,0 +1,220 @@
+"""ROS 2 node `agent_node`: operator text -> agent loop -> skill requests.
+
+Topics
+  in  /maverick/operator/text   std_msgs/String JSON {"text": "...", "speaker"?: "..."}
+                                (a plain, non-JSON string is taken as the text)
+  in  /maverick/skill/progress  std_msgs/String JSON (skill_node; a terminal state ends the tool)
+  in  /maverick/memory/answer   std_msgs/String JSON (replies to memory_query)
+  in  /maverick/memory/rooms, /maverick/memory/objects  (state block)
+  out /maverick/skill/request   std_msgs/String JSON (maverick_agent.tools.skill_request)
+  out /maverick/memory/query    std_msgs/String JSON
+  out /maverick/agent/say       std_msgs/String JSON {"text": ...} (TTS / console)
+  out /maverick/agent/event     std_msgs/String JSON {"type": "transcript"|"agent_step",
+                                "t": ..., "data": {...}} (gateway envelope; the gateway forwards)
+
+Parameters: agent.backend (scripted|claude), agent.model, agent.effort, agent.max_tokens,
+agent.cassette_path.
+"""
+
+from __future__ import annotations
+
+import json
+import queue
+import sys
+import threading
+import time
+
+import rclpy
+from maverick_mapping import topics as T
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import String
+
+from .backends import AgentConfig, make_backend
+from .loop import AgentLoop, SkillResult
+from .memory_bridge import format_answer, question_to_query
+from .tools import skill_request
+
+OPERATOR_TEXT = "/maverick/operator/text"
+AGENT_SAY = "/maverick/agent/say"
+AGENT_EVENT = "/maverick/agent/event"
+
+RELIABLE = QoSProfile(depth=20, reliability=ReliabilityPolicy.RELIABLE)
+LATCHED = QoSProfile(
+    depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL
+)
+TERMINAL = ("succeeded", "failed", "cancelled")
+
+
+class RosExecutive:
+    """Executive over ROS topics. Callbacks run on the spin thread; the loop thread waits."""
+
+    def __init__(self, node: AgentNode):
+        self.n = node
+        self._result: queue.Queue[SkillResult] = queue.Queue()
+        self._active = False
+        self._ignore_cancel = False
+        self._answers: dict[str, dict] = {}
+        self._answer_ev = threading.Event()
+        self._qn = 0
+        self.rooms: list = []
+        self.objects: list = []
+        self.progress: dict = {}
+
+    def start_skill(self, name: str, args: dict) -> None:
+        while not self._result.empty():
+            self._result.get_nowait()
+        self._ignore_cancel = self._active  # skill_node reports the replaced skill as cancelled
+        self._active = True
+        self.n.skill_pub.publish(String(data=json.dumps(skill_request(name, args))))
+
+    def wait_skill(self, timeout_s: float) -> SkillResult | None:
+        try:
+            return self._result.get(timeout=timeout_s)
+        except queue.Empty:
+            return None
+
+    def cancel_skill(self, reason: str) -> None:
+        if self._active:
+            self.n.skill_pub.publish(String(data=json.dumps({"skill": "cancel"})))
+
+    def emergency(self, kind: str) -> None:
+        # stop and land both go through the executive as a cancel; PX4 holds position (CLAUDE.md)
+        self._active = False
+        self.n.skill_pub.publish(String(data=json.dumps({"skill": "cancel"})))
+        self.n.get_logger().warn(f"emergency keyword: {kind}")
+
+    def on_progress(self, d: dict) -> None:
+        self.progress = d
+        state = d.get("state")
+        if not self._active or state not in TERMINAL:
+            return
+        if state == "cancelled" and self._ignore_cancel:
+            self._ignore_cancel = False
+            return
+        self._active = False
+        self._result.put(SkillResult(state, str(d.get("message", ""))))
+
+    def memory_query(self, question: str) -> str:
+        self._qn += 1
+        qid = f"agent-q{self._qn}"
+        q = question_to_query(question, qid)
+        if q is None:
+            return "I can only look up rooms by type and objects by name."
+        self._answer_ev.clear()
+        self.n.query_pub.publish(String(data=json.dumps(q)))
+        end = time.monotonic() + 3.0
+        while time.monotonic() < end:
+            if qid in self._answers:
+                return format_answer(self._answers.pop(qid))
+            self._answer_ev.wait(0.1)
+        return "memory did not answer in time"
+
+    def on_answer(self, d: dict) -> None:
+        if d.get("id"):
+            self._answers[str(d["id"])] = d
+            self._answer_ev.set()
+
+    def say(self, text: str) -> None:
+        self.n.say_pub.publish(String(data=json.dumps({"text": text})))
+
+    def send_photo(self, target: str, caption: str) -> str:
+        # The photo itself is attached by the gateway from the latest camera frame (not wired yet).
+        self.n.event(
+            "transcript",
+            {"id": f"photo-{time.time():.0f}", "role": "maverick", "text": f"[photo: {caption}]"},
+        )
+        return f"photo of {target} queued"
+
+    def state_block(self) -> str:
+        rooms = ", ".join(f"{r.get('type')}({r.get('id')})" for r in self.rooms) or "none yet"
+        objs = (
+            ", ".join(f"{o.get('label')}@{o.get('room_id') or '?'}" for o in self.objects[:20])
+            or "none yet"
+        )
+        p = self.progress
+        cur = f"{p.get('skill')} {p.get('state')}: {p.get('message', '')}" if p else "idle"
+        return f"rooms: {rooms}\nobjects seen: {objs}\ncurrent skill: {cur}"
+
+
+class AgentNode(Node):
+    def __init__(self) -> None:
+        super().__init__("agent_node")
+        p = self.declare_parameter
+        cfg = AgentConfig(
+            backend=str(p("agent.backend", "scripted").value),
+            model=str(p("agent.model", "claude-opus-5-5").value),
+            effort=str(p("agent.effort", "low").value),
+            max_tokens=int(p("agent.max_tokens", 16000).value),
+            cassette_path=str(p("agent.cassette_path", "").value),
+        )
+        self.skill_pub = self.create_publisher(String, T.SKILL_REQUEST, RELIABLE)
+        self.query_pub = self.create_publisher(String, T.MEM_QUERY, RELIABLE)
+        self.say_pub = self.create_publisher(String, AGENT_SAY, RELIABLE)
+        self.event_pub = self.create_publisher(String, AGENT_EVENT, RELIABLE)
+        self.ex = RosExecutive(self)
+        self.loop = AgentLoop(make_backend(cfg), self.ex, emit=self.event)
+        self.create_subscription(String, OPERATOR_TEXT, self._on_text, RELIABLE)
+        self.create_subscription(String, T.SKILL_PROGRESS, self._on_progress, LATCHED)
+        self.create_subscription(String, T.MEM_ANSWER, self._on_answer, RELIABLE)
+        self.create_subscription(String, T.MEM_ROOMS, lambda m: self._set("rooms", m), LATCHED)
+        self.create_subscription(String, T.MEM_OBJECTS, lambda m: self._set("objects", m), LATCHED)
+        self._wake = threading.Event()
+        threading.Thread(target=self._worker, daemon=True).start()
+        self.get_logger().info(f"agent_node up (backend {cfg.backend})")
+
+    def event(self, typ: str, data: dict) -> None:
+        env = {"type": typ, "t": time.time(), "data": data}
+        self.event_pub.publish(String(data=json.dumps(env)))
+
+    def _set(self, attr: str, msg: String) -> None:
+        try:
+            setattr(self.ex, attr, json.loads(msg.data))
+        except ValueError:
+            pass
+
+    def _on_progress(self, msg: String) -> None:
+        try:
+            self.ex.on_progress(json.loads(msg.data))
+        except ValueError:
+            pass
+
+    def _on_answer(self, msg: String) -> None:
+        try:
+            self.ex.on_answer(json.loads(msg.data))
+        except ValueError:
+            pass
+
+    def _on_text(self, msg: String) -> None:
+        try:
+            text = str(json.loads(msg.data).get("text", ""))
+        except (ValueError, AttributeError):
+            text = msg.data
+        if text.strip():
+            if not self.loop.submit(text.strip()):
+                self._wake.set()
+
+    def _worker(self) -> None:
+        while True:
+            self._wake.wait()
+            self._wake.clear()
+            try:
+                self.loop.process_inbox()
+            except Exception:
+                self.get_logger().error("agent loop crashed", throttle_duration_sec=1.0)
+
+
+def main(argv: list[str] | None = None) -> int:
+    rclpy.init(args=argv)
+    node = AgentNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    node.destroy_node()
+    rclpy.try_shutdown()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

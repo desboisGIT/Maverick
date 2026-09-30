@@ -130,3 +130,7 @@ These events are for display and for natural-language input only. Nothing here c
 ## Versioning
 
 `PROTOCOL_VERSION = 1` in `types.ts`. Adding optional fields or new event types is compatible. Changing a field's meaning or units bumps the version.
+
+## Agent node output (`maverick_agent`)
+
+`agent_node` publishes `std_msgs/String` JSON on `/maverick/agent/event` in the envelope above (`{"type", "t", "data"}`) for the gateway to forward unchanged. No new event types: it produces `transcript` (role `maverick` for every spoken line, including the template acknowledgement "On it."; role `user` echoing each operator utterance) and `agent_step` (one plan per operator utterance, `plan_id` = `plan-<n>`, `goal` = the utterance, one step per tool call with label such as "Go to kitchen", status `pending|running|done|failed|skipped`, `detail` = the tool result). Spoken text is also published on `/maverick/agent/say` as `{"text": ...}` for TTS. `send_photo` currently emits a text-only `transcript` (`[photo: caption]`); attaching the image (`attachments[]`) is left to the gateway, which owns the camera frames.
