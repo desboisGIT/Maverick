@@ -12,3 +12,7 @@ runs/
 # generated apartment worlds
 sim/worlds/generated/
 .claude/
+
+# API keys (never commit)
+docker/.env.secrets
+.env.secrets
