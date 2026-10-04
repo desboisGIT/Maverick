@@ -52,7 +52,8 @@ def test_state_block_last_and_prefix_stable():
     assert m1[-1]["content"][-1]["text"].startswith("<state>")
     assert m2[-1]["content"][0]["type"] == "tool_result"
     assert m2[-1]["content"][-1]["text"].startswith("<state>")
-    assert all("<state>" not in str(m) for m in loop.history)  # never stored
+    # the state block that was sent stays in the history, so the prefix never changes later
+    assert m2[0] == m1[0] and "<state>" in str(m2[0])
 
 
 def test_invalid_call_is_error_result_and_no_skill_started():
@@ -221,5 +222,5 @@ def test_history_trimmed_at_utterance_boundaries():
     loop, _, _ = make(be, max_history_utterances=3)
     for i in range(5):
         loop.handle(f"u{i}")
-    assert isinstance(loop.history[0]["content"], str)
-    assert sum(1 for m in loop.history if isinstance(m["content"], str)) <= 3
+    users = [m for m in loop.history if m["role"] == "user"]
+    assert loop.history[0]["role"] == "user" and len(users) <= 3
