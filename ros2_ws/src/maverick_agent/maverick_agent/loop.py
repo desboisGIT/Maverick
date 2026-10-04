@@ -164,7 +164,8 @@ class AgentLoop:
                 return res
             res.calls += 1
             try:
-                resp = self.backend.create(self.system, self.tools, self._with_state())
+                sent = self._with_state()
+                resp = self.backend.create(self.system, self.tools, sent)
             except BackendError as exc:
                 log.warning("backend failed: %s", exc)
                 res.ended = "backend_error"
@@ -178,6 +179,9 @@ class AgentLoop:
                 del self.history[start:]  # drop the half-finished mission, keep the history valid
                 self._say(REFUSAL if resp.stop_reason == "refusal" else "That got too long for me.")
                 return res
+            # Keep exactly what was sent (state block included): Claude binds thinking-block
+            # signatures to the conversation prefix, so the prefix must not change afterwards.
+            self.history[-1] = sent[-1]
             self.history.append({"role": "assistant", "content": resp.content})
             uses = resp.tool_uses()
             if not uses:
@@ -278,7 +282,8 @@ class AgentLoop:
 
     # -- helpers -----------------------------------------------------------------------------
     def _with_state(self) -> list[dict]:
-        """History plus the state block appended last (never stored, so the prefix stays stable)."""
+        """History plus a fresh state block appended to the last message. `_run` stores that
+        message once the model has answered, so earlier prefixes never change."""
         msgs = [dict(m) for m in self.history]
         last = msgs[-1]
         c = last["content"]
@@ -291,7 +296,11 @@ class AgentLoop:
         idx = [
             i
             for i, m in enumerate(self.history)
-            if m["role"] == "user" and isinstance(m["content"], str)
+            if m["role"] == "user"
+            and (
+                isinstance(m["content"], str)
+                or not any(b.get("type") == "tool_result" for b in m["content"])
+            )
         ]
         if len(idx) >= self.cfg.max_history_utterances:
             del self.history[: idx[-(self.cfg.max_history_utterances - 1)]]

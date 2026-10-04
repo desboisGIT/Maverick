@@ -428,13 +428,18 @@ class Metered:
         self.usage: dict = {}
         self.cost = 0.0
         self.capped = False
+        self.errors: list[str] = []
 
     def create(self, system, tools, messages) -> Response:
         if self.cost >= self.cap:
             self.capped = True
             raise BackendError("spend cap reached")
         t = time.perf_counter()
-        r = self.inner.create(system, tools, messages)
+        try:
+            r = self.inner.create(system, tools, messages)
+        except BackendError as exc:
+            self.errors.append(str(exc)[:300])  # SDK messages carry no credentials
+            raise
         self.latencies.append(time.perf_counter() - t)
         for k, v in r.usage.items():
             if isinstance(v, int | float):
@@ -456,6 +461,7 @@ def run_scenario(sc: Scenario, backend: Metered) -> dict:
     loop = AgentLoop(backend, ex, LoopConfig(max_calls=12, poll_s=0.01))
     for u, a in sc.prior:
         loop.history += [{"role": "user", "content": u}, {"role": "assistant", "content": a}]
+    n_err = len(backend.errors)
     n_lat, c0, u0 = len(backend.latencies), backend.cost, dict(backend.usage)
     t0 = time.perf_counter()
     err = None
@@ -483,6 +489,7 @@ def run_scenario(sc: Scenario, backend: Metered) -> dict:
         "wall_s": round(wall, 3),
         "tokens": {k: backend.usage.get(k, 0) - u0.get(k, 0) for k in backend.usage},
         "cost_eur": round(backend.cost - c0, 5),
+        "backend_errors": backend.errors[n_err:],
     }
 
 
