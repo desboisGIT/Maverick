@@ -22,8 +22,19 @@ class PlannerConfig:
     robot_radius: float = 0.39  # x500 circumscribed radius
     squeeze_radius: float | None = None  # optional retry radius when nothing is reachable
     # voxel quantisation (res / 2) + map and tracking residual; 0.10 let the drone clip door frames
-    margin: float = 0.16
+    margin: float = 0.22
     los_extra: float = 0.0  # extra clearance demanded of straight-line shortcuts
+    # Doors (1.1 m for the 0.78 m x500) cannot be crossed with robot_radius + margin on both sides.
+    # Cells between tight_radius and robot_radius + margin from an obstacle are passable only as a
+    # "squeeze": penalised, never a viewpoint, crossed slowly on a straight, string-pulled-with-
+    # tight-clearance segment. None disables squeezing.
+    tight_radius: float | None = 0.46
+    # when nothing is reachable (or no path exists) the squeeze radius is relaxed step by step
+    tight_fallbacks: tuple[float, ...] = (0.43, 0.40)
+    trail_radius: float = 0.2  # flown cells (the robot's own track) are passable within this
+    squeeze_cost: float = 10.0
+    squeeze_pad_m: float = 0.5  # the cell path this far before / after a squeeze stays in it
+    start_free_radius: float = 0.45  # unobserved cells this close to the robot count as free
     unknown_radius: float = 0.3  # keep this far from cells never observed (walls may hide there)
     soft_width: float = 0.6  # clearance cost acts this far beyond the hard inflation
     soft_weight: float = 6.0
@@ -59,15 +70,38 @@ def dilate(mask: np.ndarray, radius_cells: float) -> np.ndarray:
     return out
 
 
+def _narrow(occ: np.ndarray, max_span_cells: float) -> np.ndarray:
+    """Cells whose nearest obstacles along x (or along y) on both sides span <= max_span_cells."""
+    out = np.zeros_like(occ)
+    for axis in (0, 1):
+        o = np.moveaxis(occ, axis, 0)
+        n = o.shape[0]
+        idx = np.arange(n).reshape(-1, *([1] * (o.ndim - 1)))
+        prev = np.maximum.accumulate(np.where(o, idx, -10**6), axis=0)
+        later = np.flip(np.where(o, idx, 10**6), axis=0)
+        nxt = np.flip(np.minimum.accumulate(later, axis=0), axis=0)
+        span = nxt - prev
+        out |= np.moveaxis(span <= max_span_cells, 0, axis)
+    return out
+
+
 @dataclass
 class PlanningGrid:
     """Inflated planning view of an occupancy grid: hard-blocked cells and per-cell step cost."""
 
-    blocked: np.ndarray  # bool (nx, ny): occupied+inflated, or unknown
+    blocked: np.ndarray  # bool (nx, ny): occupied+inflated (tight radius), or unknown
     blocked_los: np.ndarray  # stricter, for line-of-sight shortcuts (extra clearance)
     cost: np.ndarray  # float (nx, ny) >= 1
     res: float
     origin: tuple[float, float]
+    squeeze: np.ndarray | None = None  # passable only as a squeeze (tight < clearance < hard)
+    escape: np.ndarray | None = None  # unblocked only so the robot can leave a too-close spot
+
+    def __post_init__(self) -> None:
+        if self.squeeze is None:
+            self.squeeze = np.zeros_like(self.blocked)
+        if self.escape is None:
+            self.escape = np.zeros_like(self.blocked)
 
     @staticmethod
     def build(
@@ -76,19 +110,58 @@ class PlanningGrid:
         origin: tuple[float, float],
         cfg: PlannerConfig,
         start_xy: tuple[float, float] | None = None,
+        trail: list[tuple[float, float]] | None = None,
     ) -> PlanningGrid:
+        if start_xy is not None:
+            # the robot is physically here: cells around it that no ray crossed (the camera sits
+            # ahead of the body, so the cells behind the lens may never be observed) are free
+            si, sj = int(math.floor((start_xy[0] - origin[0]) / res)), int(
+                math.floor((start_xy[1] - origin[1]) / res)
+            )
+            if 0 <= si < grid.shape[0] and 0 <= sj < grid.shape[1]:
+                near = np.zeros(grid.shape, bool)
+                near[si, sj] = True
+                near = dilate(near, cfg.start_free_radius / res) & (grid == UNKNOWN)
+                grid = np.where(near, FREE, grid).astype(grid.dtype)
         occ = grid == OCCUPIED
         hard = dilate(occ, (cfg.robot_radius + cfg.margin) / res)
         unk = grid == UNKNOWN
-        blocked = hard | unk | dilate(unk, cfg.unknown_radius / res)
+        unk_b = unk | dilate(unk, cfg.unknown_radius / res)
+        strict = hard | unk_b
+        if cfg.tight_radius is not None and cfg.tight_radius < cfg.robot_radius + cfg.margin:
+            tight = dilate(occ, cfg.tight_radius / res)
+            strip = hard & ~tight & ~unk_b
+            # a squeeze is a strip cell with obstacles on both sides (a door, a narrow corridor),
+            # not the margin beside any single wall
+            narrow = strip & _narrow(occ, 2.0 * (cfg.robot_radius + cfg.margin) / res + 1.0)
+            # plus the strip cells at the mouth of the passage (the door frame's corners)
+            squeeze = strip & dilate(narrow, 0.6 / res)
+            narrow = squeeze
+            blocked = tight | unk_b | (strip & ~narrow)
+        else:
+            blocked, squeeze = strict, np.zeros_like(strict)
         # graded clearance cost: grows towards obstacles so narrow passages are crossed centrally
         r_hard = cfg.robot_radius + cfg.margin
         levels = np.arange(r_hard + 0.1, r_hard + cfg.soft_width + 1e-9, 0.1)
         cost = np.ones(grid.shape)
         for rk in levels:
             cost += (cfg.soft_weight / len(levels)) * dilate(occ, rk / res)
-        los = dilate(occ, (cfg.robot_radius + cfg.margin + cfg.los_extra) / res) | blocked
-        pg = PlanningGrid(blocked, los, cost, res, origin)
+        cost += cfg.squeeze_cost * squeeze
+        los = dilate(occ, (cfg.robot_radius + cfg.margin + cfg.los_extra) / res) | strict
+        if trail:
+            # cells the robot itself flew through are passable whatever the (noisy, fat) map says
+            tm = np.zeros(grid.shape, bool)
+            for x, y in trail:
+                i = int(math.floor((x - origin[0]) / res))
+                j = int(math.floor((y - origin[1]) / res))
+                if 0 <= i < grid.shape[0] and 0 <= j < grid.shape[1]:
+                    tm[i, j] = True
+            tm = dilate(tm, cfg.trail_radius / res)
+            blocked = blocked & ~tm
+            los = los & ~tm
+            squeeze = squeeze & ~tm
+            cost = np.where(tm, np.minimum(cost, 1.0 + cfg.squeeze_cost), cost)
+        pg = PlanningGrid(blocked, los, cost, res, origin, squeeze)
         if start_xy is not None:  # let the robot leave a spot that is slightly too close
             si, sj = pg.to_cell(start_xy)
             if (
@@ -102,6 +175,8 @@ class PlanningGrid:
                 esc = dilate(esc, cfg.robot_radius / res) & (grid == FREE) & pg.blocked
                 pg.blocked &= ~esc
                 pg.blocked_los &= ~esc
+                pg.squeeze &= ~esc
+                pg.escape = esc
                 pg.cost = np.where(esc, 1.0 + 4.0 * cfg.soft_weight, pg.cost)
         return pg
 
@@ -203,8 +278,11 @@ def astar(
     return path[::-1]
 
 
-def line_free(pg: PlanningGrid, a: tuple[float, float], b: tuple[float, float]) -> bool:
-    """True if the straight segment a-b (metres) stays on unblocked cells."""
+def line_free(
+    pg: PlanningGrid, a: tuple[float, float], b: tuple[float, float], tight: bool = False
+) -> bool:
+    """True if the straight segment a-b (metres) stays on unblocked cells (`tight`: the squeeze
+    mask, otherwise the stricter line-of-sight mask)."""
     n = max(2, int(math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / (0.5 * pg.res))) + 1)
     t = np.linspace(0.0, 1.0, n)
     xs = a[0] + t * (b[0] - a[0])
@@ -214,25 +292,53 @@ def line_free(pg: PlanningGrid, a: tuple[float, float], b: tuple[float, float]) 
     n0, n1 = pg.blocked.shape
     if (ii < 0).any() or (jj < 0).any() or (ii >= n0).any() or (jj >= n1).any():
         return False
-    return not pg.blocked_los[ii, jj].any()
+    return not (pg.blocked if tight else pg.blocked_los)[ii, jj].any()
+
+
+def shorten_ex(
+    pg: PlanningGrid,
+    cells: list[tuple[int, int]],
+    start_xy: tuple[float, float] | None = None,
+    pad_m: float = 0.5,
+) -> tuple[list[tuple[float, float]], list[bool]]:
+    """String-pull a cell path into straight segments with line-of-sight checks (metres).
+
+    Returns (points, slow): `slow[k]` is True when the segment ending at points[k] touches a
+    squeeze (door); slow[0] is False. Segments inside a squeeze (plus `pad_m` before and after,
+    so the door is approached along its axis) are checked against the tight mask, all others
+    against the strict one, so only doors are crossed with reduced clearance.
+    """
+    pts = [pg.to_xy(c) for c in cells]
+    if start_xy is not None:
+        pts[0] = start_xy
+    n = len(cells)
+    sq = np.array([bool(pg.squeeze[c]) for c in cells])
+    ext = sq.copy()
+    for k in range(1, int(round(pad_m / pg.res)) + 1):
+        ext[k:] |= sq[:-k]
+        ext[:-k] |= sq[k:]
+    out = [pts[0]]
+    slow = [False]
+    i = 0
+    while i < n - 1:
+        j = n - 1
+        while j > i + 1:
+            if line_free(pg, pts[i], pts[j]) or (
+                ext[i : j + 1].all() and line_free(pg, pts[i], pts[j], tight=True)
+            ):
+                break
+            j -= 1
+        out.append(pts[j])
+        slow.append(bool(sq[i : j + 1].any() or (ext[i : j + 1].all() and ext[i : j + 1].any())))
+        i = j
+    return out, slow
 
 
 def shorten(
     pg: PlanningGrid, cells: list[tuple[int, int]], start_xy: tuple[float, float] | None = None
 ) -> list[tuple[float, float]]:
     """String-pull a cell path into straight segments with line-of-sight checks (metres)."""
-    pts = [pg.to_xy(c) for c in cells]
-    if start_xy is not None:
-        pts[0] = start_xy
-    out = [pts[0]]
-    i = 0
-    while i < len(pts) - 1:
-        j = len(pts) - 1
-        while j > i + 1 and not line_free(pg, pts[i], pts[j]):
-            j -= 1
-        out.append(pts[j])
-        i = j
-    return out
+    return shorten_ex(pg, cells, start_xy)[0]
 
 
 @dataclass
@@ -241,8 +347,10 @@ class PlanResult:
     reason: str = ""
     goal: Frontier | None = None
     waypoints: list[tuple[float, float, float]] = field(default_factory=list)
+    slow: list[bool] = field(default_factory=list)  # per waypoint: crossing a squeeze (door)
     frontiers: list[Frontier] = field(default_factory=list)
     path_cost: float = 0.0
+    tight: float | None = None  # relaxed squeeze radius this plan needed (None: the default)
     squeezed: bool = False  # planned with the reduced squeeze_radius
 
 
@@ -292,6 +400,13 @@ class ExplorationPlanner:
         robot_xy: tuple[float, float],
     ) -> PlanResult:
         out = self._plan(grid, res, origin, robot_xy, self.cfg)
+        if self.cfg.tight_radius is not None:
+            for tr in self.cfg.tight_fallbacks:
+                if out.status == "done" and out.reason == "no reachable frontier":
+                    out = self._plan(
+                        grid, res, origin, robot_xy, dataclasses.replace(self.cfg, tight_radius=tr)
+                    )
+                    out.tight = tr
         if (
             self.cfg.squeeze_radius is not None
             and out.status == "done"
@@ -319,7 +434,9 @@ class ExplorationPlanner:
             return PlanResult("done", "no frontier left")
         pg = PlanningGrid.build(grid, res, origin, cfg, robot_xy)
         start = pg.to_cell(robot_xy)
-        dist = dijkstra_all(pg, start)
+        dist_all = dijkstra_all(pg, start)
+        # viewpoints: never in a squeeze (door) nor in the escape zone around the robot
+        dist = np.where(pg.squeeze | pg.escape, np.inf, dist_all)
         best, best_score = None, -1.0
         near = self._min_filter(dist, 4)  # cost to the cheapest reachable cell within 0.4 m
         reach_idx = np.argwhere(np.isfinite(dist))
@@ -369,12 +486,15 @@ class ExplorationPlanner:
         if cells is None:
             self.mark_failed(best.viewpoint_xy)
             return self._plan(grid, res, origin, robot_xy, cfg)
-        pts = shorten(pg, cells, robot_xy)
+        pts, slow = shorten_ex(pg, cells, robot_xy, cfg.squeeze_pad_m)
         wps = [(x, y, cfg.altitude) for x, y in pts[1:]] or [(*best.viewpoint_xy, cfg.altitude)]
+        slow = slow[1:] if len(pts) > 1 else [False]
+        slow[-1] = True  # stop at the viewpoint slowly: PX4 overshoots a fast stop by ~0.15 m
         return PlanResult(
             "goal",
             goal=best,
             waypoints=wps,
+            slow=slow,
             frontiers=fronts,
             path_cost=float(dist[best.viewpoint]),
         )

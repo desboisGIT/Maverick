@@ -14,7 +14,7 @@ Topics
                                and every `snapshot_period_s`
 
 Parameters: resolution (0.1), max_range (5.0), max_rate_hz (5.0), stride (1), sync_tol_s (0.03),
-grid_rate_hz (1.0), delta_rate_hz (4.0), band [0.8, 1.6] (2D projection band, m), altitude (1.2,
+grid_rate_hz (1.0), delta_rate_hz (4.0), band [0.35, 1.6] (2D projection band, m), altitude (1.2,
 z of the frontier markers), min_cluster (3), snapshot_period_s (30), dump_path (/tmp/map_dump.npz).
 Service /maverick/map/dump (std_srvs/Trigger) writes the voxel map to dump_path (map_io, for the
 referee's scoring); the response message is the path.
@@ -68,7 +68,7 @@ class MappingNode(Node):
         p = self.declare_parameter
         self.vmap = VoxelMap(p("resolution", 0.1).value, max_range=float(p("max_range", 5.0).value))
         self.stride = int(p("stride", 1).value)
-        self.band = tuple(float(v) for v in p("band", [0.8, 1.6]).value)
+        self.band = tuple(float(v) for v in p("band", [0.35, 1.6]).value)
         self.altitude = float(p("altitude", 1.2).value)
         self.min_cluster = int(p("min_cluster", 3).value)
         self.snapshot_period = float(p("snapshot_period_s", 30.0).value)
