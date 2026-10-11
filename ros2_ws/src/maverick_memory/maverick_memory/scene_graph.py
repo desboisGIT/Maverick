@@ -38,7 +38,10 @@ class SceneGraphConfig:
     typing: TypingConfig = field(default_factory=TypingConfig)
     room_snap: float = 0.5  # m: a point this close to a room counts as inside it
     robot_clear: float = 0.45  # m: navigation goals keep this far from any obstacle
-    wall_clear: float = 1.5  # m: preferred goal distance from the room edge (as far as fits)
+    # connectivity of the start to the goal room is judged with this (smaller) clearance: doors are
+    # 1.1 m for the 0.78 m x500 and the map walls are fat; the skill's planner checks the path
+    connect_clear: float = 0.3
+    wall_clear: float = 1.1  # m: preferred goal distance from the room edge
 
 
 @dataclass
@@ -254,7 +257,7 @@ class SceneGraph:
         d_obs = distance_cells(free) - 0.5
         ok = room.region.free & (d_obs >= rc)
         if start is not None:
-            sok = free & (d_obs >= rc)
+            sok = free & (d_obs >= min(rc, self.cfg.connect_clear / res))
             lab, _ = label4(sok)
             si, sj = self._cell(start)
             nx, ny = lab.shape

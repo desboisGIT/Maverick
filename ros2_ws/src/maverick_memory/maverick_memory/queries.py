@@ -43,6 +43,10 @@ def answer_query(sg: SceneGraph, q: dict, robot_xy: tuple[float, float] | None) 
         rtype = str(q.get("room_type", ""))
         out["room_type"] = rtype
         res = sg.goal_for_type(rtype, start)
+        if res is None and sg.rooms_of_type(rtype):
+            # not connected to the robot through the (fat-walled) map: still name a goal in the room
+            # and let the skill's planner decide whether it can get there
+            res = sg.goal_for_type(rtype, None)
         if res is None:
             out["reason"] = f"no {rtype} known yet" if not sg.rooms_of_type(rtype) else "no goal"
             return out
