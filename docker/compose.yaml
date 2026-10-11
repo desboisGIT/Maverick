@@ -103,6 +103,9 @@ services:
       MAVERICK_HOST_LAUNCH: "${MAVERICK_HOST_LAUNCH:-none}"   # "s3" starts the S3 host stack
       MAVERICK_LAUNCH_ARGS: "${MAVERICK_LAUNCH_ARGS:-}"
       MAVERICK_LOCALISATION: "${MAVERICK_LOCALISATION:-flow}"
+    env_file:                          # model API keys (DEEPSEEK_API_KEY, ANTHROPIC_API_KEY);
+      - path: .env.secrets             # git-ignored, optional: without it the agent runs scripted
+        required: false
     ports:
       - "127.0.0.1:8765:8765"          # Mission Console gateway (websocket), localhost only
     networks:

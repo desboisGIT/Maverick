@@ -12,13 +12,15 @@ Topics
   out /maverick/agent/event     std_msgs/String JSON {"type": "transcript"|"agent_step",
                                 "t": ..., "data": {...}} (gateway envelope; the gateway forwards)
 
-Parameters: agent.backend (scripted|claude), agent.model, agent.effort, agent.max_tokens,
-agent.cassette_path.
+Parameters: agent.backend (deepseek|claude|scripted, default deepseek; falls back to scripted
+with a warning when the backend's API key is not in the environment), agent.model (empty:
+backend default), agent.effort, agent.max_tokens, agent.cassette_path.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import queue
 import sys
 import threading
@@ -30,7 +32,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
-from .backends import AgentConfig, make_backend
+from .backends import KEY_ENV, AgentConfig, make_backend
 from .loop import AgentLoop, SkillResult
 from .memory_bridge import format_answer, question_to_query
 from .tools import skill_request
@@ -142,12 +144,18 @@ class AgentNode(Node):
         super().__init__("agent_node")
         p = self.declare_parameter
         cfg = AgentConfig(
-            backend=str(p("agent.backend", "scripted").value),
-            model=str(p("agent.model", "claude-opus-5-5").value),
+            backend=str(p("agent.backend", "deepseek").value),
+            model=str(p("agent.model", "").value),
             effort=str(p("agent.effort", "low").value),
             max_tokens=int(p("agent.max_tokens", 16000).value),
             cassette_path=str(p("agent.cassette_path", "").value),
         )
+        key_env = KEY_ENV.get(cfg.backend)
+        if key_env and not os.environ.get(key_env):
+            self.get_logger().warning(
+                f"{key_env} not set: agent.backend {cfg.backend} unavailable, using scripted"
+            )
+            cfg.backend = "scripted"
         self.skill_pub = self.create_publisher(String, T.SKILL_REQUEST, RELIABLE)
         self.query_pub = self.create_publisher(String, T.MEM_QUERY, RELIABLE)
         self.say_pub = self.create_publisher(String, AGENT_SAY, RELIABLE)

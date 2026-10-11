@@ -6,7 +6,7 @@ Stage S4 of `docs/simulation-plan.md` §9. Exit: **H1 and H2 pass 8/10 held-out 
 
 - Skills `explore` and `goto_room` exist in `maverick_skills` (JSON on `/maverick/skill/request`, progress on `/maverick/skill/progress`). The scene graph (`maverick_memory`) answers room and object queries. The Mission Console shows map, pose, path and skill progress over the gateway websocket [F].
 - Closed-loop exploration in Gazebo needs accurate localisation. S4 development uses simulated motion capture (`MAVERICK_LOCALISATION=mocap`) and labels every result "with mocap" until Track B localisation lands (docs/s3-plan.md) [F].
-- No Anthropic credentials are configured on this machine yet, so CI and the first sub-stages run on a scripted backend. Cloud runs start once the owner provides a key or runs `ant auth login` (see §6).
+- The owner provided DeepSeek and Anthropic API keys (git-ignored `docker/.env.secrets`, passed to the `host` container as an optional env file). Without the file the agent falls back to the scripted backend, so CI never needs a key or the network [F].
 
 ## 1. Sub-stages
 
@@ -31,10 +31,21 @@ S4a and the scripted-speech parts of S4d do not need the simulator and can run i
 
 **Tools exposed to the model** (strict JSON schemas, `additionalProperties: false`): `explore(budget_s)`, `goto_room(room)`, `search(object, region?, budget_s)`, `come_to(person)`, `return_home()`, `memory_query(question)`, `say(text)`, `send_photo(object_id | "current_view", caption)`. No tool takes coordinates or setpoints (CLAUDE.md decision) [F: by construction].
 
-**Backends** (one interface, chosen by config `agent.backend`):
+**Backends** (one interface, chosen by config `agent.backend`). **Default: `deepseek`** (owner decision 2026-11-11, from the measurements below); `claude` stays available behind the same interface and is re-compared on the end-to-end H2 runs.
+
+20-command eval (`python3 -m maverick_agent.eval_commands`, fake executive and memory, rule-based scoring) [F]:
+
+| Backend | Correct | Invalid calls | Model-call latency p50 / p95 | Cost per 20 commands |
+|---|---|---|---|---|
+| `deepseek` (`deepseek-flash`, thinking off) | 19/20 | 0 | 1.07 / 1.35 s | €0.006 |
+| `claude` (`claude-opus-5-5`, effort low), after the history fix | 20/20 | 0 | 2.18 / 3.02 s | €0.17 |
+
+DeepSeek's miss: "make me a coffee" made it query memory and start `goto_room kitchen` before declining. Claude's first runs lost 2–3 missions to a loop bug (the state block was appended to the sent message but not stored, so the replayed history differed and Claude rejected the thinking-block signatures); fixed in `loop.py`, verified 20/20 with 0 backend errors and 86 % of input tokens served from the prompt cache.
+
 
 - `scripted`: maps utterance patterns to fixed tool-call sequences. Used by CI and the failsafe suite; no network.
 - `claude`: Anthropic Python SDK, `client.messages.create`. Model `claude-opus-5-5` by default, `output_config.effort` = `low` for conversational turns (latency) and configurable per role; adaptive thinking is always on for this model. `tool_choice` stays `auto` (forced tool choice is rejected by this model). Prompt caching on the tools + system prefix (`cache_control` breakpoint after the system prompt); check `usage.cache_read_input_tokens` in the logs. Handle `stop_reason == "refusal"` with server-side fallbacks enabled and a spoken "I can't do that one." Typed SDK errors: rate limits and 5xx retry, then the drone says it lost its connection and keeps hovering (nothing flight-critical depends on the cloud).
+- `deepseek`: DeepSeek chat completions through the `openai` SDK (`https://api.deepseek.com`, model `deepseek-flash`, thinking disabled for latency). Same error policy as `claude`.
 - `local`: an on-host model for offline demos, added only after a VRAM check against the 16 GB budget (§10 of the simulation plan). Not needed for the S4 exit.
 
 **Cassettes:** every cloud run records request/response pairs; CI replays them (`scripted` backend can read cassettes), so scenario tests are deterministic and free.
@@ -57,10 +68,11 @@ S4a and the scripted-speech parts of S4d do not need the simulator and can run i
 - H1/H2 scenario files as in simulation plan §8; the referee checks: spoken answer vs manifest (yes/no rule check; counts by a small LLM judge later), photo shows the object when present, ends within 1.5 m of the speaker, 0 collisions, time limit.
 - Seeds: tune on 0–99999, report on held-out 1000000+ only. Results with mocap are labelled as such and do not count as the final exit until Track B localisation passes.
 
-## 6. Open items for the owner
+## 6. Owner decisions and open items
 
-- **Anthropic credentials** for the `claude` backend (an API key in the host container environment, or `ant auth login`). Until then everything runs on the scripted backend.
-- Cloud cost estimate [E]: one H2 mission ≈ 10–15 model calls with a cached ~3k-token prefix, well under $0.10 per mission at current Opus 5.5 prices; a 10-seed nightly run under $2.
+- Keys: DeepSeek (about €3 credit) and Anthropic (about €5 credit), in `docker/.env.secrets`. Every eval run takes a hard cost cap (`--cap-eur`).
+- Default agent model: DeepSeek (cheaper by about 30×, faster by about 2× on the eval, one harmless miss). Re-compare with Claude on end-to-end H2 missions in the simulator.
+- Vision (confirming objects in photos, roof damage, person appearance) needs an image-capable model; which provider is decided at S5.
 
 ## 7. Order of work
 
