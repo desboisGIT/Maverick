@@ -241,3 +241,34 @@ def test_explore_scan_step_times_out_without_yaw_control():
         s.step(Ctx(now, (2.0, 3.0), open_room_grid(), now, 0.0))  # yaw never changes
         st.append(s.state)
     assert "scan" in st and st[-1] != "scan"  # gave up on the scan, moved on to planning
+
+
+def test_follower_uses_a_tighter_arrival_radius_and_slow_speed_on_squeeze_waypoints():
+    f = WaypointFollower(arrive_radius=0.2, arrive_radius_slow=0.05)
+    f.set([(1.0, 0.0), (2.0, 0.0)], 0.0, [True, False])
+    assert f.target_slow
+    assert f.update((0.9, 0.0), 1.0) == "moving"  # 0.1 m away: not yet arrived at a squeeze
+    assert f.update((0.97, 0.0), 2.0) == "moving"  # advanced past the first waypoint
+    assert f.target == (2.0, 0.0) and not f.target_slow
+
+
+def test_explore_goal_speed_is_slow_only_for_squeeze_waypoints():
+    # a wall with a 1.05 m door between the robot and the unexplored east room
+    g = np.full((90, 50), 0, np.int8)
+    g[:, 0:2] = g[:, 48:50] = 100
+    g[0:2, :] = 100
+    g[40:42, :] = 100
+    g[40:42, 20:30] = 0
+    g[45:, :] = -1
+    cfg = SkillConfig(scan_every_m=0.0)
+    sk = ExploreSkill(cfg, 0.0)
+    out = sk.step(Ctx(0.0, (1.5, 2.5), (g, RES, (0.0, 0.0)), 0.0))
+    assert out.goal is not None
+    assert any(e["ev"] == "plan" for e in sk.events)
+    assert sk.follow.slow and len(sk.follow.slow) == len(sk.follow.wps)
+    if any(sk.follow.slow):
+        assert out.speed in (None, cfg.speed_slow)
+
+
+def test_goto_room_goal_tolerance_is_tight():
+    assert SkillConfig().goal_tolerance <= 0.3

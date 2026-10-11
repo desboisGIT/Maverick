@@ -28,7 +28,9 @@ from maverick_mapping.synthetic import Scene  # noqa: E402
 from referee.s3_frames import Vec3, spawn_origin, world_to_map  # noqa: E402
 from referee.s3_verdicts import BODY_RADIUS_M  # noqa: E402
 
-BAND = (0.8, 1.6)  # obstacle band of the 2D grid (mapping_node default; flight altitude 1.2 +- 0.4)
+# Obstacle band of the 2D grid (mapping_node default). The height estimate follows the
+# rangefinder, so anything taller than 0.35 m under the drone lifts it: it is an obstacle.
+BAND = (0.35, 1.6)
 BODY_HALF_HEIGHT = 0.12
 MIN_FLIGHT_Z = 0.4  # track samples below this are take-off / landing, not flight
 

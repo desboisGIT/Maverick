@@ -12,6 +12,7 @@ the flight client's NED goal at the very end.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import math
 from dataclasses import dataclass, field
 
@@ -23,7 +24,7 @@ from maverick_mapping.planner import (
     PlannerConfig,
     PlanningGrid,
     astar,
-    shorten,
+    shorten_ex,
 )
 
 XY = tuple[float, float]
@@ -32,6 +33,8 @@ XY = tuple[float, float]
 @dataclass
 class SkillConfig:
     altitude: float = 1.2
+    speed_slow: float = 0.4  # speed on a waypoint that crosses a squeeze (door)
+    arrive_radius_slow: float = 0.08  # tighter arrival there: no corner cutting at a door frame
     speed: float = 0.8  # goto speed handed to the flight client (it caps at its own limit)
     # waypoint counts as reached; corners are cut by up to this much, while the path clears
     # obstacles by only robot_radius + margin (0.2 clipped door frames)
@@ -40,7 +43,7 @@ class SkillConfig:
     min_progress: float = 0.15
     replan_s: float = 3.0
     look_s: float = 1.5  # pause at a viewpoint, facing the frontier, before judging it
-    goal_tolerance: float = 0.4  # goto_room: done when this close to the goal
+    goal_tolerance: float = 0.25  # goto_room: done when this close to the goal
     goto_timeout_s: float = 180.0
     query_timeout_s: float = 3.0
     path_fail_s: float = 10.0  # goto_room: give up when no path exists for this long
@@ -60,11 +63,13 @@ class Ctx:
     robot_yaw: float | None = (
         None  # camera heading, rad ccw from +x (None: no yaw feedback, no scans)
     )
+    trail: list | None = None  # own flown positions (map frame), for the last-resort path
 
 
 @dataclass
 class Out:
     goal: tuple[float, float, float] | None = None  # (x, y, yaw) map frame; altitude = cfg
+    speed: float | None = None  # goto speed for `goal` (None: the node's default)
     hold: bool = False  # hold at the current robot position
     path: dict | None = None  # gateway `path` data
     progress: dict | None = None  # gateway `skill_progress` data
@@ -89,9 +94,15 @@ class WaypointFollower:
     """Walk a waypoint list: one goto goal at a time, advance on arrival, detect a stall."""
 
     def __init__(
-        self, arrive_radius: float = 0.2, stuck_s: float = 12.0, min_progress: float = 0.15
+        self,
+        arrive_radius: float = 0.2,
+        stuck_s: float = 12.0,
+        min_progress: float = 0.15,
+        arrive_radius_slow: float | None = None,
     ):
         self.arrive_radius, self.stuck_s, self.min_progress = arrive_radius, stuck_s, min_progress
+        self.arrive_radius_slow = arrive_radius_slow or arrive_radius
+        self.slow: list[bool] = []
         self.wps: list[XY] = []
         self.i = 0
         self._new = False
@@ -102,9 +113,14 @@ class WaypointFollower:
     def target(self) -> XY | None:
         return self.wps[self.i] if self.i < len(self.wps) else None
 
-    def set(self, wps: list[XY], now: float) -> None:
+    @property
+    def target_slow(self) -> bool:
+        return self.i < len(self.slow) and self.slow[self.i]
+
+    def set(self, wps: list[XY], now: float, slow: list[bool] | None = None) -> None:
         prev = self.target
         self.wps, self.i = [tuple(w) for w in wps], 0
+        self.slow = list(slow) if slow else [False] * len(self.wps)
         t = self.target
         self._new = t is not None and (prev is None or math.dist(t, prev) > 0.05)
         self._best, self._t_best = math.inf, now
@@ -117,7 +133,9 @@ class WaypointFollower:
 
     def update(self, robot: XY, now: float) -> str:
         """'moving', 'arrived' (all waypoints reached) or 'stuck'."""
-        while self.i < len(self.wps) and math.dist(robot, self.wps[self.i]) < self.arrive_radius:
+        while self.i < len(self.wps) and math.dist(robot, self.wps[self.i]) < (
+            self.arrive_radius_slow if self.target_slow else self.arrive_radius
+        ):
             self.i += 1
             self._new = True
             self._best, self._t_best = math.inf, now
@@ -147,11 +165,19 @@ class _Base:
     def __init__(self, cfg: SkillConfig, now: float) -> None:
         self.cfg = cfg
         self.t0 = now
-        self.follow = WaypointFollower(cfg.arrive_radius, cfg.stuck_s, cfg.min_progress)
+        self.follow = WaypointFollower(
+            cfg.arrive_radius, cfg.stuck_s, cfg.min_progress, cfg.arrive_radius_slow
+        )
         self.finished = False
         self.result = ""
         self.n_paths = 0
         self.last_path: dict | None = None
+        self.events: list[dict] = []  # decision log, drained by the node (debugging, referee)
+
+    def ev(self, ctx: Ctx, kind: str, **kw) -> None:
+        r = ctx.robot_xy or (0.0, 0.0)
+        xy = [round(r[0], 2), round(r[1], 2)]
+        self.events.append({"t": round(ctx.now - self.t0, 2), "ev": kind, "xy": xy, **kw})
 
     def progress(self, state: str, progress: float, message: str, eta: float | None = None) -> dict:
         d = {
@@ -170,6 +196,7 @@ class _Base:
 
     def finish(self, state: str, message: str, ctx: Ctx, hold: bool = True) -> Out:
         self.finished, self.result = True, state
+        self.ev(ctx, "finish", state=state, message=message)
         robot = ctx.robot_xy or (0.0, 0.0)
         if state == "succeeded":
             path = _path_event(f"{self.skill}-done", "done", robot, [], None, self.cfg.altitude)
@@ -243,10 +270,19 @@ class ExploreSkill(_Base):
         self.goal = plan.goal
         self.last_plan = ctx.now
         wps = [(x, y) for x, y, _ in plan.waypoints]
-        self.follow.set(wps, ctx.now)
+        self.follow.set(wps, ctx.now, plan.slow)
         self.state = "fly"
         self.n_fronts = len(plan.frontiers)
         self.n_goals += 1
+        self.ev(
+            ctx,
+            "plan",
+            centroid=[round(v, 2) for v in plan.goal.centroid],
+            vp=[round(v, 2) for v in plan.goal.viewpoint_xy],
+            size=plan.goal.size,
+            n_fronts=len(plan.frontiers),
+            wps=[[round(x, 2), round(y, 2)] for x, y, _ in plan.waypoints],
+        )
         self.last_path = _path_event(
             self._new_path_id(),
             "executing",
@@ -286,6 +322,7 @@ class ExploreSkill(_Base):
             if self.state == "fly":
                 st = self.follow.update(robot, ctx.now)
                 if st == "stuck":
+                    self.ev(ctx, "stuck", target=self.follow.target)
                     self.planner.mark_viewpoint_failed(self.goal.viewpoint_xy)
                     self.state = "plan"
                 elif st == "arrived":
@@ -305,6 +342,7 @@ class ExploreSkill(_Base):
                     x = org[0] + (f.cells[:, 0] + 0.5) * res
                     y = org[1] + (f.cells[:, 1] + 0.5) * res
                     if float(np.min(np.hypot(x - robot[0], y - robot[1]))) < 0.9:
+                        self.ev(ctx, "look_failed")
                         self.planner.mark_failed(robot)  # looked, the frontier did not resolve
                         break
                 self.state = "plan"
@@ -320,6 +358,8 @@ class ExploreSkill(_Base):
             if self.state in ("plan", "replan"):
                 plan = self._run(ctx)
                 if plan.status == "done":
+                    self.ev(ctx, "plan_done", reason=plan.reason, n_fronts=len(plan.frontiers),
+                            failed=len(self.planner.failed), failed_vp=len(self.planner.failed_vp))
                     why = {
                         "no frontier left": "explored everything",
                         "no reachable frontier": "explored everything reachable",
@@ -335,6 +375,7 @@ class ExploreSkill(_Base):
                         self.state = "fly"
                         break
                 if math.dist(plan.goal.viewpoint_xy, robot) < 0.35:
+                    self.ev(ctx, "vp_here", vp=list(plan.goal.viewpoint_xy))
                     self.planner.mark_viewpoint_failed(plan.goal.viewpoint_xy)
                     self.state = "plan"
                     continue
@@ -343,6 +384,7 @@ class ExploreSkill(_Base):
         t = self.follow.take_new_target()
         if t is not None:
             out.goal = (t[0], t[1], math.atan2(t[1] - robot[1], t[0] - robot[0]))
+            out.speed = self.cfg.speed_slow if self.follow.target_slow else None
         return out
 
 
@@ -381,18 +423,30 @@ class GotoRoomSkill(_Base):
         if answer.get("id") == self.qid:
             self.answer = answer
 
-    def _plan_path(self, ctx: Ctx) -> list[XY] | None:
+    def _plan_path(self, ctx: Ctx) -> tuple[list[XY], list[bool]] | None:
         grid, res, org = ctx.grid
-        pg = PlanningGrid.build(grid, res, org, self.cfg.planner, ctx.robot_xy)
-        a = pg.to_cell(ctx.robot_xy)
-        b = snap_free(pg, self.goal_xy, 0.6)
-        if b is None or not pg.free_at(*a):
-            return None
-        cells = astar(pg, a, b)
+        cells = pg = b = None
+        tiers = [(tr, None) for tr in (self.cfg.planner.tight_radius,
+                                       *self.cfg.planner.tight_fallbacks)]
+        tiers.append((self.cfg.planner.tight_fallbacks[-1], ctx.trail))  # + the flown track
+        for tr, trail in tiers:
+            pc = dataclasses.replace(self.cfg.planner, tight_radius=tr)
+            pg = PlanningGrid.build(grid, res, org, pc, ctx.robot_xy, trail)
+            a = pg.to_cell(ctx.robot_xy)
+            b = snap_free(pg, self.goal_xy, 0.6)
+            if b is None or not pg.free_at(*a):
+                continue
+            cells = astar(pg, a, b)
+            if cells is not None:
+                if tr != self.cfg.planner.tight_radius or trail:
+                    self.ev(ctx, "tight_fallback", tight=tr, trail=trail is not None)
+                break
         if cells is None:
             return None
-        pts = shorten(pg, cells, ctx.robot_xy)[1:]
-        return pts or [pg.to_xy(b)]
+        pts, slow = shorten_ex(pg, cells, ctx.robot_xy, self.cfg.planner.squeeze_pad_m)
+        if len(pts) < 2:
+            return [pg.to_xy(b)], [False]
+        return pts[1:], slow[1:]
 
     def step(self, ctx: Ctx) -> Out:
         el = ctx.now - self.t0
@@ -422,6 +476,7 @@ class GotoRoomSkill(_Base):
                 why = self.answer.get("reason") or f"no {label} known yet"
                 return self.finish("failed", f"I do not know where the {label} is: {why}", ctx)
             self.goal_xy = (float(self.answer["goal"][0]), float(self.answer["goal"][1]))
+            self.ev(ctx, "goal", goal=list(self.goal_xy), answer=self.answer)
             self.d0 = max(math.dist(robot, self.goal_xy), 0.5)
             self.state = "plan"
         dist = math.dist(robot, self.goal_xy)
@@ -443,7 +498,8 @@ class GotoRoomSkill(_Base):
                 self.state = "plan"
         if self.state == "plan":
             self.last_plan = ctx.now
-            wps = self._plan_path(ctx)
+            res_p = self._plan_path(ctx)
+            wps, slow = res_p if res_p is not None else (None, None)
             if wps is None:
                 if self.t_nopath is None:
                     self.t_nopath = ctx.now
@@ -454,9 +510,10 @@ class GotoRoomSkill(_Base):
             self.t_nopath = None
             first = self.n_paths == 0 or self.follow.target is None
             moved = first or math.dist(wps[0], self.follow.target) > 0.05
-            self.follow.set(wps, ctx.now)
+            self.follow.set(wps, ctx.now, slow)
             self.state = "fly"
             if moved:
+                self.ev(ctx, "path", wps=[[round(x, 2), round(y, 2)] for x, y in wps])
                 self.last_path = _path_event(
                     self._new_path_id(), "executing", robot, wps, self.goal_xy, self.cfg.altitude
                 )
@@ -464,6 +521,7 @@ class GotoRoomSkill(_Base):
         t = self.follow.take_new_target()
         if t is not None:
             out.goal = (t[0], t[1], math.atan2(t[1] - robot[1], t[0] - robot[0]))
+            out.speed = self.cfg.speed_slow if self.follow.target_slow else None
         return out
 
 

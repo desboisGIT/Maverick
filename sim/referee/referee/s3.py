@@ -315,6 +315,11 @@ def run_explore(stack: Stack, world: dict, out: Path, i: int, args, goto: bool) 
                 "world_xy": [end_pos["x"], end_pos["y"]],
             }
         t_after = time.time()
+        try:  # the skills' decision log (diagnosis)
+            ev = stack.exec("host", "cat /tmp/skill_events.jsonl", timeout=30)
+            (run_dir / "skill_events.jsonl").write_text(ev.stdout)
+        except Exception:  # noqa: BLE001
+            pass
         land_and_wait(stack, px4)
     finally:
         stop_observers(stack)

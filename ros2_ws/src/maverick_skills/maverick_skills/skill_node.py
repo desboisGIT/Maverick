@@ -23,6 +23,7 @@ default_budget_s (360).
 from __future__ import annotations
 
 import json
+import math
 import sys
 import time
 
@@ -53,8 +54,11 @@ class SkillNode(Node):
             default_budget_s=float(p("default_budget_s", 360.0).value),
         )
         self.require_hover = bool(p("require_hover", True).value)
+        self.cam_fwd = float(p("camera_forward_m", 0.12).value)  # camera_mount.json x
+        self.event_log = str(p("event_log", "/tmp/skill_events.jsonl").value)
         self.skill = None
         self.robot_xy: tuple[float, float] | None = None
+        self.trail: list[tuple[float, float]] = []
         self.robot_yaw: float | None = None
         self.grid = None
         self.grid_time = -1e9
@@ -77,7 +81,14 @@ class SkillNode(Node):
         return time.monotonic() - self.t0
 
     def _ctx(self) -> Ctx:
-        return Ctx(self._now(), self.robot_xy, self.grid, self.grid_time, self.robot_yaw)
+        return Ctx(
+            self._now(),
+            self.robot_xy,
+            self.grid,
+            self.grid_time,
+            robot_yaw=self.robot_yaw,
+            trail=self.trail,
+        )
 
     # -- inputs ------------------------------------------------------------------------------
     def _on_grid(self, msg: OccupancyGrid) -> None:
@@ -87,8 +98,16 @@ class SkillNode(Node):
 
     def _on_pose(self, msg: PoseStamped) -> None:
         t, r = pose_to_tr(msg)
-        self.robot_xy = (float(t[0]), float(t[1]))
-        self.robot_yaw = camera_euler(r)[0]
+        yaw = camera_euler(r)[0]
+        # the pose is the camera's; the controlled point is the body centre, behind the lens
+        self.robot_xy = (
+            float(t[0]) - self.cam_fwd * math.cos(yaw),
+            float(t[1]) - self.cam_fwd * math.sin(yaw),
+        )
+        self.robot_yaw = yaw
+        if not self.trail or math.dist(self.trail[-1], self.robot_xy) > 0.1:
+            self.trail.append(self.robot_xy)
+            del self.trail[:-6000]
 
     def _on_status(self, msg: String) -> None:
         try:
@@ -122,6 +141,7 @@ class SkillNode(Node):
             return
         if old is not None and not old.finished:
             self._emit(old.cancel(ctx), ctx)
+            self._drain_events(old)
         self.skill = new
         if new is None:
             self.get_logger().info("skill cancelled")
@@ -142,13 +162,25 @@ class SkillNode(Node):
             )
             return
         self._emit(s.step(ctx), ctx)
+        self._drain_events(s)
+
+    def _drain_events(self, s) -> None:
+        if not s.events:
+            return
+        try:
+            with open(self.event_log, "a") as f:
+                for e in s.events:
+                    f.write(json.dumps({"skill": s.skill, **e}) + "\n")
+        except OSError:
+            pass
+        s.events.clear()
 
     def _emit(self, out: Out, ctx: Ctx) -> None:
         z = self.cfg.altitude
         if out.goal is not None:
             x, y, yaw = out.goal
             self.goal_pub.publish(
-                String(data=json.dumps(goal_message(x, y, z, yaw, self.cfg.speed)))
+                String(data=json.dumps(goal_message(x, y, z, yaw, out.speed or self.cfg.speed)))
             )
         elif out.hold and ctx.robot_xy is not None:
             x, y = ctx.robot_xy
