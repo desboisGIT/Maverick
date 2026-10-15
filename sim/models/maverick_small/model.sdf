@@ -1,0 +1,385 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version='1.9'>
+  <!-- Maverick small indoor quad: 3.5 inch ducted ("cinewhoop") class, 0.30 m across including the
+       guards (circumscribed radius 0.15 m), about 0.5 kg all-up. Standalone model (no x500 include);
+       derivation of every number: sim/px4/README.md "Small drone". Same sensors and Gazebo topics
+       as the `maverick` (x500) model. base_link is the centre of mass, FLU. -->
+  <model name='maverick_small'>
+    <pose>0 0 0.05 0 0 0</pose>
+    <self_collide>false</self_collide>
+    <static>false</static>
+    <link name='base_link'>
+      <inertial>
+        <mass>0.38</mass>
+        <inertia>
+          <ixx>5.0e-4</ixx><iyy>5.0e-4</iyy><izz>6.8e-4</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <gravity>true</gravity>
+      <velocity_decay />
+      <visual name='body_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.07 0.06 0.05</size></box></geometry>
+        <material><ambient>0.15 0.15 0.18 1</ambient><diffuse>0.15 0.15 0.18 1</diffuse></material>
+      </visual>      <visual name='duct_0_visual'>
+        <pose>0.067 -0.067 0 0 0 0</pose>
+        <geometry><cylinder><radius>0.055</radius><length>0.045</length></cylinder></geometry>
+        <material><ambient>0.25 0.25 0.28 0.6</ambient><diffuse>0.25 0.25 0.28 0.6</diffuse></material>
+      </visual>
+      <visual name='arm_0_visual'>
+        <pose>0.0335 -0.0335 0 0 0 -0.7853981634</pose>
+        <geometry><box><size>0.0948 0.012 0.012</size></box></geometry>
+        <material><ambient>0.15 0.15 0.18 1</ambient><diffuse>0.15 0.15 0.18 1</diffuse></material>
+      </visual>      <visual name='duct_1_visual'>
+        <pose>-0.067 0.067 0 0 0 0</pose>
+        <geometry><cylinder><radius>0.055</radius><length>0.045</length></cylinder></geometry>
+        <material><ambient>0.25 0.25 0.28 0.6</ambient><diffuse>0.25 0.25 0.28 0.6</diffuse></material>
+      </visual>
+      <visual name='arm_1_visual'>
+        <pose>-0.0335 0.0335 0 0 0 -0.7853981634</pose>
+        <geometry><box><size>0.0948 0.012 0.012</size></box></geometry>
+        <material><ambient>0.15 0.15 0.18 1</ambient><diffuse>0.15 0.15 0.18 1</diffuse></material>
+      </visual>      <visual name='duct_2_visual'>
+        <pose>0.067 0.067 0 0 0 0</pose>
+        <geometry><cylinder><radius>0.055</radius><length>0.045</length></cylinder></geometry>
+        <material><ambient>0.25 0.25 0.28 0.6</ambient><diffuse>0.25 0.25 0.28 0.6</diffuse></material>
+      </visual>
+      <visual name='arm_2_visual'>
+        <pose>0.0335 0.0335 0 0 0 0.7853981634</pose>
+        <geometry><box><size>0.0948 0.012 0.012</size></box></geometry>
+        <material><ambient>0.15 0.15 0.18 1</ambient><diffuse>0.15 0.15 0.18 1</diffuse></material>
+      </visual>      <visual name='duct_3_visual'>
+        <pose>-0.067 -0.067 0 0 0 0</pose>
+        <geometry><cylinder><radius>0.055</radius><length>0.045</length></cylinder></geometry>
+        <material><ambient>0.25 0.25 0.28 0.6</ambient><diffuse>0.25 0.25 0.28 0.6</diffuse></material>
+      </visual>
+      <visual name='arm_3_visual'>
+        <pose>-0.0335 -0.0335 0 0 0 0.7853981634</pose>
+        <geometry><box><size>0.0948 0.012 0.012</size></box></geometry>
+        <material><ambient>0.15 0.15 0.18 1</ambient><diffuse>0.15 0.15 0.18 1</diffuse></material>
+      </visual>      <!-- One collision volume for body and guards: a disc of the circumscribed radius 0.15 m -->
+      <collision name='guard_collision'>
+        <pose>0 0 -0.005 0 0 0</pose>
+        <geometry><cylinder><radius>0.15</radius><length>0.09</length></cylinder></geometry>
+        <surface>
+          <contact><ode><min_depth>0.001</min_depth><max_vel>0</max_vel></ode></contact>
+          <friction><ode /></friction>
+        </surface>
+      </collision>
+      <sensor name="air_pressure_sensor" type="air_pressure">
+        <gz_frame_id>base_link</gz_frame_id>
+        <always_on>1</always_on>
+        <update_rate>50</update_rate>
+        <air_pressure><pressure><noise type="gaussian"><mean>0</mean><stddev>3</stddev></noise></pressure></air_pressure>
+      </sensor>
+      <sensor name="magnetometer_sensor" type="magnetometer">
+        <gz_frame_id>base_link</gz_frame_id>
+        <always_on>1</always_on>
+        <update_rate>100</update_rate>
+        <magnetometer>
+          <x><noise type="gaussian"><stddev>0.0001</stddev></noise></x>
+          <y><noise type="gaussian"><stddev>0.0001</stddev></noise></y>
+          <z><noise type="gaussian"><stddev>0.0001</stddev></noise></z>
+        </magnetometer>
+      </sensor>
+      <sensor name="imu_sensor" type="imu">
+        <gz_frame_id>base_link</gz_frame_id>
+        <always_on>1</always_on>
+        <update_rate>250</update_rate>
+        <imu>
+          <angular_velocity>
+            <x><noise type="gaussian"><mean>0.0</mean><stddev>0.0008726646</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0.0</mean><stddev>0.0008726646</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0.0</mean><stddev>0.0008726646</stddev></noise></z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x><noise type="gaussian"><mean>0.0</mean><stddev>0.00637</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0.0</mean><stddev>0.00637</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0.0</mean><stddev>0.00686</stddev></noise></z>
+          </linear_acceleration>
+        </imu>
+      </sensor>
+      <sensor name="navsat_sensor" type="navsat">
+        <gz_frame_id>base_link</gz_frame_id>
+        <always_on>1</always_on>
+        <update_rate>30</update_rate>
+      </sensor>
+    </link>
+    <link name='rotor_0'>
+      <gravity>true</gravity>
+      <self_collide>false</self_collide>
+      <velocity_decay />
+      <pose>0.067 -0.067 0.02 0 0 0</pose>
+      <inertial>
+        <mass>0.03</mass>
+        <inertia><ixx>6.0e-6</ixx><iyy>6.0e-6</iyy><izz>4.0e-6</izz></inertia>
+      </inertial>
+      <visual name='rotor_0_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.089 0.008 0.001</size></box></geometry>
+        <material><ambient>0.6 0.1 0.1 1</ambient><diffuse>0.6 0.1 0.1 1</diffuse></material>
+      </visual>
+    </link>
+    <joint name='rotor_0_joint' type='revolute'>
+      <parent>base_link</parent>
+      <child>rotor_0</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit><lower>-1e+16</lower><upper>1e+16</upper></limit>
+        <dynamics><spring_reference>0</spring_reference><spring_stiffness>0</spring_stiffness></dynamics>
+      </axis>
+    </joint>
+    <link name='rotor_1'>
+      <gravity>true</gravity>
+      <self_collide>false</self_collide>
+      <velocity_decay />
+      <pose>-0.067 0.067 0.02 0 0 0</pose>
+      <inertial>
+        <mass>0.03</mass>
+        <inertia><ixx>6.0e-6</ixx><iyy>6.0e-6</iyy><izz>4.0e-6</izz></inertia>
+      </inertial>
+      <visual name='rotor_1_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.089 0.008 0.001</size></box></geometry>
+        <material><ambient>0.6 0.1 0.1 1</ambient><diffuse>0.6 0.1 0.1 1</diffuse></material>
+      </visual>
+    </link>
+    <joint name='rotor_1_joint' type='revolute'>
+      <parent>base_link</parent>
+      <child>rotor_1</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit><lower>-1e+16</lower><upper>1e+16</upper></limit>
+        <dynamics><spring_reference>0</spring_reference><spring_stiffness>0</spring_stiffness></dynamics>
+      </axis>
+    </joint>
+    <link name='rotor_2'>
+      <gravity>true</gravity>
+      <self_collide>false</self_collide>
+      <velocity_decay />
+      <pose>0.067 0.067 0.02 0 0 0</pose>
+      <inertial>
+        <mass>0.03</mass>
+        <inertia><ixx>6.0e-6</ixx><iyy>6.0e-6</iyy><izz>4.0e-6</izz></inertia>
+      </inertial>
+      <visual name='rotor_2_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.089 0.008 0.001</size></box></geometry>
+        <material><ambient>0.6 0.1 0.1 1</ambient><diffuse>0.6 0.1 0.1 1</diffuse></material>
+      </visual>
+    </link>
+    <joint name='rotor_2_joint' type='revolute'>
+      <parent>base_link</parent>
+      <child>rotor_2</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit><lower>-1e+16</lower><upper>1e+16</upper></limit>
+        <dynamics><spring_reference>0</spring_reference><spring_stiffness>0</spring_stiffness></dynamics>
+      </axis>
+    </joint>
+    <link name='rotor_3'>
+      <gravity>true</gravity>
+      <self_collide>false</self_collide>
+      <velocity_decay />
+      <pose>-0.067 -0.067 0.02 0 0 0</pose>
+      <inertial>
+        <mass>0.03</mass>
+        <inertia><ixx>6.0e-6</ixx><iyy>6.0e-6</iyy><izz>4.0e-6</izz></inertia>
+      </inertial>
+      <visual name='rotor_3_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.089 0.008 0.001</size></box></geometry>
+        <material><ambient>0.6 0.1 0.1 1</ambient><diffuse>0.6 0.1 0.1 1</diffuse></material>
+      </visual>
+    </link>
+    <joint name='rotor_3_joint' type='revolute'>
+      <parent>base_link</parent>
+      <child>rotor_3</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit><lower>-1e+16</lower><upper>1e+16</upper></limit>
+        <dynamics><spring_reference>0</spring_reference><spring_stiffness>0</spring_stiffness></dynamics>
+      </axis>
+    </joint>
+    <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel">
+      <jointName>rotor_0_joint</jointName>
+      <linkName>rotor_0</linkName>
+      <turningDirection>ccw</turningDirection>
+      <timeConstantUp>0.008</timeConstantUp>
+      <timeConstantDown>0.016</timeConstantDown>
+      <maxRotVelocity>1000.0</maxRotVelocity>
+      <motorConstant>4.41e-06</motorConstant>
+      <momentConstant>0.01</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <motorNumber>0</motorNumber>
+      <rotorDragCoefficient>4.2e-05</rotorDragCoefficient>
+      <rollingMomentCoefficient>5e-07</rollingMomentCoefficient>
+      <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      <motorType>velocity</motorType>
+    </plugin>
+    <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel">
+      <jointName>rotor_1_joint</jointName>
+      <linkName>rotor_1</linkName>
+      <turningDirection>ccw</turningDirection>
+      <timeConstantUp>0.008</timeConstantUp>
+      <timeConstantDown>0.016</timeConstantDown>
+      <maxRotVelocity>1000.0</maxRotVelocity>
+      <motorConstant>4.41e-06</motorConstant>
+      <momentConstant>0.01</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <motorNumber>1</motorNumber>
+      <rotorDragCoefficient>4.2e-05</rotorDragCoefficient>
+      <rollingMomentCoefficient>5e-07</rollingMomentCoefficient>
+      <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      <motorType>velocity</motorType>
+    </plugin>
+    <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel">
+      <jointName>rotor_2_joint</jointName>
+      <linkName>rotor_2</linkName>
+      <turningDirection>cw</turningDirection>
+      <timeConstantUp>0.008</timeConstantUp>
+      <timeConstantDown>0.016</timeConstantDown>
+      <maxRotVelocity>1000.0</maxRotVelocity>
+      <motorConstant>4.41e-06</motorConstant>
+      <momentConstant>0.01</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <motorNumber>2</motorNumber>
+      <rotorDragCoefficient>4.2e-05</rotorDragCoefficient>
+      <rollingMomentCoefficient>5e-07</rollingMomentCoefficient>
+      <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      <motorType>velocity</motorType>
+    </plugin>
+    <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel">
+      <jointName>rotor_3_joint</jointName>
+      <linkName>rotor_3</linkName>
+      <turningDirection>cw</turningDirection>
+      <timeConstantUp>0.008</timeConstantUp>
+      <timeConstantDown>0.016</timeConstantDown>
+      <maxRotVelocity>1000.0</maxRotVelocity>
+      <motorConstant>4.41e-06</motorConstant>
+      <momentConstant>0.01</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <motorNumber>3</motorNumber>
+      <rotorDragCoefficient>4.2e-05</rotorDragCoefficient>
+      <rollingMomentCoefficient>5e-07</rollingMomentCoefficient>
+      <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      <motorType>velocity</motorType>
+    </plugin>
+
+    <!-- Optical flow camera (PX4 "optical_flow" sensor) and downward rangefinder, both under the
+         belly. The near clip / min range are lowered from 0.1 m (x500) because the belly is only
+         0.03 m above the floor at rest. -->
+    <link name='flow_link'>
+      <pose relative_to='base_link'>0.03 0 -0.03 0 0 0</pose>
+      <inertial>
+        <mass>0.005</mass>
+        <inertia><ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz></inertia>
+      </inertial>
+      <sensor name='flow_camera' type='camera'>
+        <gz_frame_id>flow_link</gz_frame_id>
+        <pose>0 0 0 0 1.5707 0</pose>
+        <camera>
+          <horizontal_fov>0.733038</horizontal_fov>
+          <image><width>100</width><height>100</height></image>
+          <clip><near>0.01</near><far>30</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>50</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+      <sensor name='optical_flow' type='custom' gz:type='optical_flow'>
+        <gz_frame_id>flow_link</gz_frame_id>
+        <always_on>1</always_on>
+        <update_rate>50</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name='optical_flow_joint' type='fixed'>
+      <parent>base_link</parent>
+      <child>flow_link</child>
+    </joint>
+    <link name='lidar_sensor_link'>
+      <pose relative_to='base_link'>0 0 -0.03 0 1.57 0</pose>
+      <inertial>
+        <mass>0.001</mass>
+        <inertia><ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz></inertia>
+      </inertial>
+      <sensor name='lidar' type='gpu_lidar'>
+        <gz_frame_id>lidar_sensor_link</gz_frame_id>
+        <pose>0 0 0 3.14 0 0</pose>
+        <update_rate>50</update_rate>
+        <ray>
+          <scan>
+            <horizontal><samples>1</samples><resolution>1</resolution><min_angle>0</min_angle><max_angle>0</max_angle></horizontal>
+            <vertical><samples>1</samples><resolution>1</resolution><min_angle>0</min_angle><max_angle>0</max_angle></vertical>
+          </scan>
+          <range><min>0.01</min><max>100.0</max><resolution>0.01</resolution></range>
+        </ray>
+        <always_on>1</always_on>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name='lidar_sensor_joint' type='fixed'>
+      <parent>base_link</parent>
+      <child>lidar_sensor_link</child>
+    </joint>
+    <!-- Forward RGB-D camera plus a semantic segmentation camera at the same pose and with the
+         same intrinsics (the "camera hardware"; sim/camera_driver reads the three topics).
+         Mount pose and intrinsics: keep in sync with camera_mount.json (tested).
+         The link is almost massless (5 g, a bare sensor board) so flight behaviour does not
+         change; PX4's x500_depth uses the 61 g OAK-D Lite instead.
+         All three sensors render 320x240 at 10 Hz (RGB-D visual odometry needs a usable
+         resolution; 640x480 at 5 Hz ran the sim at real-time factor 0.62, see sim/px4/README.md);
+         the driver downsamples semantic to 160x120. -->
+    <link name='camera_link'>
+      <pose relative_to='base_link'>0.07 0 0.04 0 0 0</pose>
+      <inertial>
+        <mass>0.005</mass>
+        <inertia>
+          <ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <gravity>true</gravity>
+      <sensor name='rgb' type='camera'>
+        <topic>maverick/camera/rgb</topic>
+        <camera>
+          <horizontal_fov>1.274</horizontal_fov>
+          <image><width>320</width><height>240</height><format>R8G8B8</format></image>
+          <clip><near>0.1</near><far>30</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>10</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+      <sensor name='depth' type='depth_camera'>
+        <topic>maverick/camera/depth</topic>
+        <camera>
+          <horizontal_fov>1.274</horizontal_fov>
+          <image><width>320</width><height>240</height><format>R_FLOAT32</format></image>
+          <clip><near>0.2</near><far>19.1</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>10</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+      <sensor name='semantic' type='segmentation'>
+        <topic>maverick/camera/semantic</topic>
+        <camera>
+          <segmentation_type>semantic</segmentation_type>
+          <horizontal_fov>1.274</horizontal_fov>
+          <image><width>320</width><height>240</height></image>
+          <clip><near>0.2</near><far>19.1</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>10</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name='camera_joint' type='fixed'>
+      <parent>base_link</parent>
+      <child>camera_link</child>
+    </joint>
+    </model>
+</sdf>

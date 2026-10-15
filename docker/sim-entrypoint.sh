@@ -4,7 +4,7 @@
 #                  camera driver (CAMERA_DRIVER=0 disables it, CAMERA_BRIDGE_ADDR default 10.231.1.3)
 #   with args    : exec them (e.g. `docker compose run sim bash`)
 # Env: HEADLESS=1 (default) no Gazebo GUI; HEADLESS=0 shows it via X11.
-#      PX4_SIM_MODEL (default gz_maverick, set by compose). ROS_DOMAIN_ID is picked up as UXRCE_DDS_DOM_ID.
+#      MAVERICK_DRONE=small|x500 (default small) picks PX4_SIM_MODEL (gz_maverick_small | gz_maverick). ROS_DOMAIN_ID is picked up as UXRCE_DDS_DOM_ID.
 #      PX4's uXRCE-DDS client reaches the agent via PX4_PARAM_UXRCE_DDS_AG_IP (compose).
 set -uo pipefail
 
@@ -60,7 +60,18 @@ case "$MAVERICK_LOCALISATION" in
     mocap|vo) export MAVERICK_EV_CTRL="${MAVERICK_EV_CTRL:-9}" ;;
     *) export MAVERICK_EV_CTRL="${MAVERICK_EV_CTRL:-0}" ;;
 esac
-export PX4_SIM_MODEL="${PX4_SIM_MODEL:-gz_maverick}"
+# Drone: MAVERICK_DRONE=small (default) -> gz_maverick_small (airframe 4501), x500 -> gz_maverick (4500).
+# An explicit PX4_SIM_MODEL wins.
+export MAVERICK_DRONE="${MAVERICK_DRONE:-small}"
+if [ -z "${PX4_SIM_MODEL:-}" ]; then
+    case "$MAVERICK_DRONE" in
+        small) PX4_SIM_MODEL=gz_maverick_small ;;
+        x500) PX4_SIM_MODEL=gz_maverick ;;
+        *) echo "[entrypoint] unknown MAVERICK_DRONE=$MAVERICK_DRONE (small|x500)" >&2; exit 1 ;;
+    esac
+fi
+export PX4_SIM_MODEL
+echo "[entrypoint] drone $MAVERICK_DRONE, PX4_SIM_MODEL $PX4_SIM_MODEL"
 export GZ_IP="${GZ_IP:-127.0.0.1}"
 cd "$PX4_BUILD/rootfs" || exit 1
 # px4-rc.gzsim sources rootfs/gz_env.sh, which *overwrites* PX4_GZ_WORLDS with PX4's own worlds

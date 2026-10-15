@@ -1,0 +1,12 @@
+{
+  "_comment": "Single source of truth for the forward camera. model.sdf must match (tested in ros2_ws/src/maverick_bridge/test/test_camera_pose.py). xyz in metres and rpy in radians give the Gazebo sensor frame (x forward, y left, z up) relative to base_link (FLU body, origin at the centre of mass). The optical frame (z forward, x right, y down) is derived from it by maverick_bridge.camera_pose.",
+  "frame_id": "camera_optical",
+  "xyz_flu": [0.07, 0.0, 0.04],
+  "rpy_flu": [0.0, 0.0, 0.0],
+  "horizontal_fov": 1.274,
+  "rgb_size": [320, 240],
+  "depth_size": [320, 240],
+  "semantic_size": [160, 120],
+  "clip": [0.2, 19.1],
+  "rate_hz": 10
+}

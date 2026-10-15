@@ -1,0 +1,48 @@
+#!/bin/sh
+#
+# @name Maverick small indoor drone (Gazebo)
+# @type Quadrotor
+#
+# 3.5 inch ducted quad, 0.30 m across with guards, about 0.5 kg (model sim/models/maverick_small).
+# Same base behaviour as 4500_gz_maverick (failsafes, limits, EKF2 and external-vision parameters),
+# then the frame-specific values: control allocation geometry, hover thrust, rate/attitude gains.
+# Derivation and the runs behind each value: sim/px4/README.md "Small drone".
+
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=maverick_small}
+
+. ${R}etc/init.d-posix/airframes/4500_gz_maverick
+
+# --- Control allocation geometry (FRD, m), matches the rotor poses in the model -------------------
+# Motor offset 0.067 m in x and y. Channel order as 4001_gz_x500: 0 front-right ccw, 1 rear-left
+# ccw, 2 front-left cw, 3 rear-right cw. KM = model momentConstant (0.01 m), sign = direction.
+param set-default CA_ROTOR0_PX 0.067
+param set-default CA_ROTOR0_PY 0.067
+param set-default CA_ROTOR0_KM 0.01
+
+param set-default CA_ROTOR1_PX -0.067
+param set-default CA_ROTOR1_PY -0.067
+param set-default CA_ROTOR1_KM 0.01
+
+param set-default CA_ROTOR2_PX 0.067
+param set-default CA_ROTOR2_PY -0.067
+param set-default CA_ROTOR2_KM -0.01
+
+param set-default CA_ROTOR3_PX -0.067
+param set-default CA_ROTOR3_PY 0.067
+param set-default CA_ROTOR3_KM -0.01
+
+# --- Thrust ---------------------------------------------------------------------------------------
+param set-default MPC_THR_HOVER 0.45
+
+# --- Rate and attitude gains (lower inertia, 4 N per motor at full command) ---------------------
+param set-default MC_ROLLRATE_P 0.02
+param set-default MC_ROLLRATE_I 0.03
+param set-default MC_ROLLRATE_D 0.0004
+param set-default MC_PITCHRATE_P 0.02
+param set-default MC_PITCHRATE_I 0.03
+param set-default MC_PITCHRATE_D 0.0004
+param set-default MC_YAWRATE_P 0.06
+param set-default MC_YAWRATE_I 0.03
+
+# --- Rangefinder / flow: the belly is 0.03 m above the floor at rest --------------------------
+param set-default EKF2_MIN_RNG 0.03

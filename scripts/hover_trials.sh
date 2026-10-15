@@ -51,6 +51,7 @@ for i in $(seq 1 "$N"); do
       >>"$log" 2>&1 || true
     result="$(grep -E '^\{.*"result"' "$log" | tail -n 1 || true)"
     [[ -n "$result" ]] || result='{"result": "fail", "reason": "no_result_line"}'
+    in_sim "python3 /maverick/scripts/ulog_rates.py" >"${log%.log}-ulog.txt" 2>&1 || true
     "${COMPOSE[@]}" logs >"${log%.log}-stack.log" 2>&1 || true
   fi
   echo "$result" >>"$OUT/results.jsonl"

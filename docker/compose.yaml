@@ -22,6 +22,7 @@ x-maverick: &maverick
     ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
     ROS_DOMAIN_ID: "0"
     RUST_LOG: "${RUST_LOG:-info}"       # zenoh-bridge-ros2dds log level
+    MAVERICK_DRONE: "${MAVERICK_DRONE:-small}"   # small | x500: one switch for model, airframe, worldgen, planner
 
 services:
   sim:
@@ -34,9 +35,14 @@ services:
     volumes:
       - ..:/maverick
       - /tmp/.X11-unix:/tmp/.X11-unix  # X11 socket for the Gazebo GUI
-      # Maverick's drone (x500_flow + Maverick PX4 params, see sim/px4/README.md).
+      # Both drones are mounted; MAVERICK_DRONE (small | x500, default small) picks the one PX4
+      # starts (the entrypoint sets PX4_SIM_MODEL). See sim/px4/README.md.
+      #   x500  : 4500_gz_maverick (x500_flow + Maverick PX4 params), model `maverick`
+      #   small : 4501_gz_maverick_small (sources 4500), model `maverick_small`
       - ../sim/px4/airframes/4500_gz_maverick:/opt/PX4-Autopilot/build/px4_sitl_default/etc/init.d-posix/airframes/4500_gz_maverick:ro
+      - ../sim/px4/airframes/4501_gz_maverick_small:/opt/PX4-Autopilot/build/px4_sitl_default/etc/init.d-posix/airframes/4501_gz_maverick_small:ro
       - ../sim/models/maverick:/opt/PX4-Autopilot/Tools/simulation/gz/models/maverick:ro
+      - ../sim/models/maverick_small:/opt/PX4-Autopilot/Tools/simulation/gz/models/maverick_small:ro
       # The entrypoint is baked into the image; mounting it lets PX4_GZ_WORLDS take effect
       # without a rebuild (it patches gz_env.sh, which otherwise forces PX4's own worlds dir).
       - ../docker/sim-entrypoint.sh:/usr/local/bin/sim-entrypoint.sh:ro
@@ -47,7 +53,7 @@ services:
       QT_X11_NO_MITSHM: "1"
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: all
-      PX4_SIM_MODEL: "${PX4_SIM_MODEL:-gz_maverick}"
+      PX4_SIM_MODEL: "${PX4_SIM_MODEL:-}"   # empty: derived from MAVERICK_DRONE by the entrypoint
       # Optical flow needs a textured floor: on PX4's plain default world the EKF reports
       # zero motion while the drone drifts away (measured in S1, sim/px4/README.md).
       PX4_GZ_WORLD: "${PX4_GZ_WORLD:-textured}"
