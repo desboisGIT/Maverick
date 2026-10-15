@@ -29,6 +29,9 @@ class DroneConfig:
     goal_clear: float  # memory: navigation goals keep this far from obstacles
     connect_clear: float  # memory: connectivity of the start to the goal room
     wall_clear: float  # memory: preferred goal distance from the room edge
+    goal_tolerance: float  # goto_room: done when this close to the goal
+    arrive_radius: float  # waypoint reached (the hold jitters by a few cm)
+    arrive_radius_slow: float  # same for waypoints that cross a squeeze
     mount_dir: str  # sim/models/<mount_dir>/camera_mount.json
 
     def planner(self) -> PlannerConfig:
@@ -46,10 +49,25 @@ class DroneConfig:
 
 DRONES = {
     # x500 values: exactly what the S3 mocap results were produced with
-    "x500": DroneConfig("x500", 0.39, 0.12, 0.22, 0.45, 0.3, 0.2, 0.45, 0.3, 1.1, "maverick"),
+    "x500": DroneConfig(
+        "x500", 0.39, 0.12, 0.22, 0.45, 0.3, 0.2, 0.45, 0.3, 1.1, 0.25, 0.1, 0.08, "maverick"
+    ),
     # 3.5 inch ducted quad: 0.30 m across with guards
     "small": DroneConfig(
-        "small", 0.15, 0.07, 0.20, 0.27, 0.25, 0.12, 0.30, 0.2, 0.8, "maverick_small"
+        "small",
+        0.15,
+        0.07,
+        0.20,
+        0.27,
+        0.25,
+        0.12,
+        0.30,
+        0.2,
+        1.25,
+        0.15,
+        0.12,
+        0.1,
+        "maverick_small",
     ),
 }
 

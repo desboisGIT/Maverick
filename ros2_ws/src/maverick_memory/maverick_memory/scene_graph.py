@@ -237,7 +237,7 @@ class SceneGraph:
         anchor=None,
         robot_clear: float | None = None,
         wall_clear: float | None = None,
-        near_label: str | None = None,
+        near_label: str | tuple[str, ...] | None = None,
     ) -> tuple[float, float] | None:
         """A free point inside the room, preferably >= wall_clear m from its edge and
         >= robot_clear m from any obstacle, reachable from `start` (x, y) through such cells.
@@ -272,12 +272,24 @@ class SceneGraph:
         if not ok.any():
             return None
         # the mask reaches 0.1 m past the wall face, so subtract one cell to measure to the wall
-        d_wall = (distance_cells(room.region.mask) - 1.0) * res
+        # furniture belongs to the room: a counter along the wall must not count as the room's edge
+        mask = room.region.mask.copy()
+        nx, ny = mask.shape
+        for o in self.objects_in(room_id):
+            i0, j0 = self._cell(
+                (o.position[0] - o.size[0] / 2 - 0.05, o.position[1] - o.size[1] / 2 - 0.05)
+            )
+            i1, j1 = self._cell(
+                (o.position[0] + o.size[0] / 2 + 0.05, o.position[1] + o.size[1] / 2 + 0.05)
+            )
+            mask[max(i0, 0) : max(min(i1 + 1, nx), 0), max(j0, 0) : max(min(j1 + 1, ny), 0)] = True
+        d_wall = (distance_cells(mask) - 1.0) * res
         cw = np.minimum(d_wall, wc)
         best = float(cw[ok].max())
         cand = ok & (cw >= best - 0.05)
         if anchor is None and near_label:
-            pts = [o.position[:2] for o in self.objects_in(room_id) if o.label == near_label]
+            labels = (near_label,) if isinstance(near_label, str) else near_label
+            pts = [o.position[:2] for o in self.objects_in(room_id) if o.label in labels]
             if pts:
                 anchor = np.mean(pts, axis=0)
         if anchor is None:
@@ -294,7 +306,14 @@ class SceneGraph:
         room = self.nearest_room_of_type(room_type, start)
         if room is None:
             return None
-        key = {"kitchen": "fridge", "living": "sofa", "bedroom": "bed", "bathroom": "toilet"}
+        # any of the type's key objects anchors the goal (a merged open-plan region has its
+        # centroid in the wrong half more often than not)
+        key = {
+            "kitchen": ("fridge", "oven", "kitchen_counter"),
+            "living": ("sofa", "tv_unit", "coffee_table"),
+            "bedroom": ("bed", "nightstand", "wardrobe"),
+            "bathroom": ("toilet", "shower"),
+        }
         goal = self.goal_in_room(room.id, start=start, near_label=key.get(room_type))
         return (room, goal) if goal else None
 

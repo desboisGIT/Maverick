@@ -54,6 +54,9 @@ class SkillNode(Node):
             altitude=float(p("altitude", 1.2).value),
             speed=float(p("speed", 0.8).value),
             default_budget_s=float(p("default_budget_s", 360.0).value),
+            goal_tolerance=drone.goal_tolerance,
+            arrive_radius=drone.arrive_radius,
+            arrive_radius_slow=drone.arrive_radius_slow,
             planner=drone.planner(),
         )
         self.require_hover = bool(p("require_hover", True).value)

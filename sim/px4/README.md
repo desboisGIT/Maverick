@@ -2,6 +2,7 @@
 
 Files:
 - `sim/px4/airframes/4500_gz_maverick`: airframe (sources `4021_gz_x500_flow`, then `param set-default` for Maverick's parameters, each with its measured reason).
+- `sim/px4/airframes/4501_gz_maverick_small`, `sim/models/maverick_small/`: the DEFAULT drone, the small indoor quad (section "Small drone" below). `MAVERICK_DRONE=small|x500` (default small) selects it; the x500 files below stay as they are.
 - `sim/models/maverick/{model.config,model.sdf}`: Gazebo model `maverick`, a plain include of PX4's `x500_flow` (x500 + optical flow + LW20 downward rangefinder, no GPS). Plus the S3 forward camera (RGB, depth, semantic; mount in `camera_mount.json`).
 
 ## Installing into the sim container (bind mounts)
@@ -14,7 +15,7 @@ PX4 SITL starts with `PX4_SIM_MODEL=gz_maverick`. `rcS` finds the airframe by fi
 env: PX4_SIM_MODEL=gz_maverick
 ```
 
-The airframe sets no `PX4_PARAM_*` workaround any more; `NAV_DLL_ACT 0` is in the file. The Gazebo model instance is named `maverick_0`.
+The airframe sets no `PX4_PARAM_*` workaround any more; `NAV_DLL_ACT 0` is in the file. The Gazebo model instance is named `maverick_0` (x500) or `maverick_small_0` (small). Compose mounts both drones; the entrypoint sets `PX4_SIM_MODEL` (`gz_maverick_small` or `gz_maverick`) from `MAVERICK_DRONE`, an explicit `PX4_SIM_MODEL` wins.
 
 ## World requirement (important)
 
@@ -105,3 +106,32 @@ Results with mocap, held-out seeds 1000000-1000004, 360 s budget (NOT exit resul
 | 1000004 | 0.82 | 5 | 1.0 | 0.044 / 0.426 |
 
 goto_room (explore first, then "kitchen"): 0/5 (explore crashes or does not find a route: 4-55 collisions). Localisation meets its target here (error <= 0.15 m before any crash); the remaining collisions are in planning and flight (door frames and corners, tracking overshoot), not localisation.
+
+## Small drone (default, `MAVERICK_DRONE=small`)
+
+Owner decision 2026-11-11: the simulated drone is a small indoor quad, because the x500 (0.78 m across) cannot pass real interior doors (0.7-0.9 m). Files: `sim/models/maverick_small/` (standalone SDF, camera mount in `camera_mount.json`), `sim/px4/airframes/4501_gz_maverick_small` (sources 4500, so failsafes, limits, EKF2 and external-vision settings are identical; adds the frame-specific values). Gazebo model instance `maverick_small_0`. Same sensors and Gazebo topics as the `maverick` model (RGB/depth/semantic camera, optical flow, downward rangefinder, IMU, baro, mag, navsat).
+
+Target: 3.5 inch ducted ("cinewhoop") class quad with prop guards, circumscribed radius 0.15 m (0.30 m across), about 0.5 kg all-up, thrust-to-weight 3.5, speed limits unchanged (1 m/s indoor).
+
+Derivation (design values [E]; checked values [F] in the next list):
+
+| Quantity | Value | Basis |
+|---|---|---|
+| Motor positions | (+-0.067, +-0.067) m, 0.095 m from the centre | duct outer radius 0.055 m, 0.095 + 0.055 = 0.15 m circumscribed [E] |
+| Collision | one cylinder, radius 0.15 m, 0.09 m high, around body and guards | the planner/referee model the body as a 0.15 m disc; the x500 collision geometry is boxes [E] |
+| Mass | base 0.38 + 4 x 0.03 (motor + prop + duct share) + camera 0.005 + flow 0.005 + range 0.001 = 0.511 kg | typical 3.5 inch cinewhoop with 4S battery, camera, depth sensor, bridge board [E] |
+| Inertia | base 0.38 kg as a cylinder r 0.06 m, h 0.07 m: Ixx = Iyy = 5.0e-4, Izz = 6.8e-4; the rotor links add m y^2 per motor in Gazebo: total about Ixx 1.0e-3, Izz 1.8e-3 kg m^2 | solid-body formulas [E] |
+| Thrust | hover 0.511 x 9.81 / 4 = 1.25 N per motor; T/W 3.5 gives 4.4 N max; `motorConstant` k = 4.41e-6 N/(rad/s)^2 with `maxRotVelocity` 1000 rad/s (4.41 N) | PX4's gz output is ω = 150 + 850 u rad/s (SIM_GZ_EC_MIN 150, MAX 1000); hover at u = 0.45 means ω = 532 rad/s, k = 1.25 / 532^2 [E] |
+| `momentConstant` | 0.01 m (x500: 0.016) | smaller props, torque/thrust ratio scales with diameter [E]; `CA_ROTOR*_KM` = +-0.01 is the same number (x500 uses 0.05 against 0.016 in the model) |
+| `rotorDragCoefficient`, `rollingMomentCoefficient` | 4.2e-5, 5e-7 | x500 values scaled by k (x500 ratio 9.4 x k) [E] |
+| Motor time constants | 0.008 s up, 0.016 s down (x500 0.0125 / 0.025) | small motors spin up faster [E] |
+| Belly sensors | flow camera near clip 0.01 m, rangefinder min 0.01 m, both 0.03 m under the centre; base 0.05 m above the floor at rest | x500's 0.1 m limits would blind them; `EKF2_MIN_RNG` 0.03 = rangefinder reading at rest [E] |
+| Camera mount | x 0.07, z 0.04 m from `base_link` (x500: 0.12, 0.10), same optics | in front of and above the duct tops so the ducts are not in the image; scaled with the frame [E] |
+| Allocation | `CA_ROTOR0..3_PX/PY` = (+-0.067, +-0.067) in the 4001 channel order | must equal the model motor positions [F by construction] |
+| `MPC_THR_HOVER` | 0.45 | from the thrust derivation [E], measured below [F] |
+| Rate gains | roll/pitch P 0.02, I 0.03, D 0.0004; yaw P 0.06, I 0.03 | PX4 defaults (0.15 / 0.2 / 0.003, yaw 0.2 / 0.1) scaled by about 1/8 to 1/3: effective authority per unit controller output is thrust over inertia, which is about 15x the x500's [E] |
+
+Hover results with this airframe (20 trials, each on a fresh stack, `just hover-trials 20`, through the bridge, take-off to 2 m, 10 s hover, land) [F]:
+- 20/20 pass; maximum altitude error 0.062 m (limit 0.15), maximum horizontal drift 0.15 m (limit 0.2).
+- Hover thrust estimate of PX4's estimator: 0.437-0.446 (design 0.45): hover sits at 44 % throttle. Mean motor commands 0.445-0.454.
+- Rate loop (PX4 log, airborne window about 14 s per trial, `scripts/ulog_rates.py`): angular-rate RMS about the mean roll 0.0118 / pitch 0.0095 / yaw 0.0087 rad/s (mean over trials; worst trial 0.021 / 0.014 / 0.018 rad/s, i.e. 0.5-1.2 deg/s). The spectrum above 8 Hz has at most 0.0015 rad/s RMS, and the dominant components are below 1 Hz at under 0.004 rad/s: no sustained rate oscillation. The numbers are gyro noise plus the position loop's small corrections; no gain retuning was needed beyond the initial scaling [F, hover only; manoeuvres are covered by the S3 runs].

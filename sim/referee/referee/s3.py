@@ -366,6 +366,17 @@ def run_explore(stack: Stack, world: dict, out: Path, i: int, args, goto: bool) 
     return rec
 
 
+def save_logs(stack: Stack, run_dir: Path) -> None:
+    """Keep the host (flight client, skills, mapping) and sim logs of the run for debugging."""
+    try:
+        if run_dir.is_dir():
+            for svc in ("host", "sim"):
+                r = stack.compose("logs", "--no-color", svc, timeout=120)
+                (run_dir / f"stack-{svc}.log").write_text(r.stdout[-3_000_000:])
+    except Exception as e:  # never let debugging output fail a run
+        print(f"could not save stack logs: {e}", file=sys.stderr)
+
+
 def run_one(stack: Stack, scenario: str, seed: int, out: Path, i: int, args) -> dict:
     world = make_world(seed)
     configure_stack(
@@ -377,6 +388,7 @@ def run_one(stack: Stack, scenario: str, seed: int, out: Path, i: int, args) -> 
             return run_hover(stack, world, out, i, args)
         return run_explore(stack, world, out, i, args, goto=scenario == "goto_room")
     finally:
+        save_logs(stack, out / f"run-{i:03d}-{world['name']}")
         stack.down()
 
 

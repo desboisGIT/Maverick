@@ -122,8 +122,15 @@ class WaypointFollower:
         self.wps, self.i = [tuple(w) for w in wps], 0
         self.slow = list(slow) if slow else [False] * len(self.wps)
         t = self.target
-        self._new = t is not None and (prev is None or math.dist(t, prev) > 0.05)
-        self._best, self._t_best = math.inf, now
+        same = t is not None and prev is not None and math.dist(t, prev) <= 0.05
+        if t is None:
+            self._new = False
+        elif not same:
+            self._new = True
+        # else: a goal still waiting to be sent (update() advanced to this target) stays pending;
+        # clearing it here left the drone waiting at the previous waypoint (seeds 10-13 goto_room)
+        if not same:  # a replan that keeps the target must not hide a stall from the stuck timer
+            self._best, self._t_best = math.inf, now
 
     def take_new_target(self) -> XY | None:
         if self._new:
@@ -358,8 +365,14 @@ class ExploreSkill(_Base):
             if self.state in ("plan", "replan"):
                 plan = self._run(ctx)
                 if plan.status == "done":
-                    self.ev(ctx, "plan_done", reason=plan.reason, n_fronts=len(plan.frontiers),
-                            failed=len(self.planner.failed), failed_vp=len(self.planner.failed_vp))
+                    self.ev(
+                        ctx,
+                        "plan_done",
+                        reason=plan.reason,
+                        n_fronts=len(plan.frontiers),
+                        failed=len(self.planner.failed),
+                        failed_vp=len(self.planner.failed_vp),
+                    )
                     why = {
                         "no frontier left": "explored everything",
                         "no reachable frontier": "explored everything reachable",
@@ -426,8 +439,9 @@ class GotoRoomSkill(_Base):
     def _plan_path(self, ctx: Ctx) -> tuple[list[XY], list[bool]] | None:
         grid, res, org = ctx.grid
         cells = pg = b = None
-        tiers = [(tr, None) for tr in (self.cfg.planner.tight_radius,
-                                       *self.cfg.planner.tight_fallbacks)]
+        tiers = [
+            (tr, None) for tr in (self.cfg.planner.tight_radius, *self.cfg.planner.tight_fallbacks)
+        ]
         tiers.append((self.cfg.planner.tight_fallbacks[-1], ctx.trail))  # + the flown track
         for tr, trail in tiers:
             pc = dataclasses.replace(self.cfg.planner, tight_radius=tr)
@@ -490,6 +504,7 @@ class GotoRoomSkill(_Base):
                     return self.finish("succeeded", f"arrived in the {label}", ctx, hold=False)
                 self.state = "plan"
             elif st == "stuck":
+                self.ev(ctx, "stuck", target=self.follow.target, n_stuck=self.n_stuck + 1)
                 self.n_stuck += 1
                 if self.n_stuck >= 3:
                     return self.finish("failed", f"stuck on the way to the {label}", ctx)
@@ -522,6 +537,14 @@ class GotoRoomSkill(_Base):
         if t is not None:
             out.goal = (t[0], t[1], math.atan2(t[1] - robot[1], t[0] - robot[0]))
             out.speed = self.cfg.speed_slow if self.follow.target_slow else None
+            self.ev(
+                ctx,
+                "send",
+                wp=[round(t[0], 2), round(t[1], 2)],
+                i=self.follow.i,
+                n=len(self.follow.wps),
+                slow=self.follow.target_slow,
+            )
         return out
 
 

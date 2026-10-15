@@ -272,3 +272,22 @@ def test_explore_goal_speed_is_slow_only_for_squeeze_waypoints():
 
 def test_goto_room_goal_tolerance_is_tight():
     assert SkillConfig().goal_tolerance <= 0.3
+
+
+def test_replan_with_the_same_target_does_not_hide_a_stall():
+    f = WaypointFollower(arrive_radius=0.1, stuck_s=5.0, min_progress=0.1)
+    f.set([(1.0, 0.0)], 0.0)
+    assert f.update((0.5, 0.0), 0.5) == "moving"
+    for k in range(1, 12):  # replans every 1 s hand over the same target; the robot never moves
+        f.set([(1.0, 0.0)], float(k))
+        st = f.update((0.5, 0.0), k + 0.1)
+    assert st == "stuck"
+
+
+def test_goal_pending_from_a_waypoint_advance_survives_a_replan():
+    f = WaypointFollower(arrive_radius=0.1)
+    f.set([(0.0, 1.0), (0.0, 2.0)], 0.0)
+    assert f.take_new_target() == (0.0, 1.0)
+    assert f.update((0.0, 0.95), 1.0) == "moving"  # reached wp 0, target is now (0, 2), unsent
+    f.set([(0.0, 2.0)], 1.1)  # replan whose first waypoint is that same target
+    assert f.take_new_target() == (0.0, 2.0)
