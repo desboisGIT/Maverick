@@ -39,7 +39,9 @@ from camera_driver.processing import (  # noqa: E402
     downsample_semantic,
 )
 
-DEFAULT_MOUNT = Path(__file__).resolve().parents[3] / "sim/models/maverick/camera_mount.json"
+_X500 = os.environ.get("MAVERICK_DRONE", "small").lower() == "x500"
+_MODEL_DIR = "maverick" if _X500 else "maverick_small"
+DEFAULT_MOUNT = Path(__file__).resolve().parents[3] / f"sim/models/{_MODEL_DIR}/camera_mount.json"
 JPEG_QUALITY = 80
 
 
@@ -184,7 +186,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default=os.environ.get("CAMERA_BRIDGE_ADDR", "10.231.1.3"))
     ap.add_argument("--port", type=int, default=proto.DEFAULT_PORT)
-    ap.add_argument("--model", default=os.environ.get("CAMERA_MODEL", "maverick_0"))
+    ap.add_argument(
+        "--model",
+        default=os.environ.get("CAMERA_MODEL", "maverick_0" if _X500 else "maverick_small_0"),
+    )
     ap.add_argument("--mount", type=Path, default=DEFAULT_MOUNT)
     ap.add_argument("--dump", type=Path, default=None)
     ap.add_argument("--stats-every", type=float, default=10.0)

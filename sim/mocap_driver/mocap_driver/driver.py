@@ -1,6 +1,7 @@
 """Simulated motion-capture system (runs in the sim container, "in the room").
 
-Reads maverick_0's pose from Gazebo transport (world network), throttles to ~30 Hz, adds mocap
+Reads the drone's pose (maverick_small_0, maverick_0 for x500) from Gazebo transport (world
+network), throttles to ~30 Hz, adds mocap
 noise (2 mm, 0.5 deg, +-5 ms sample-time jitter) and sends it over UDP to the bridge on the drone
 network (maverick_bridge.mocap_protocol). Positions are relative to the spawn point, which is the
 PX4 local origin: x, y from the spawn pose (PX4_GZ_MODEL_POSE), z from the first sample.
@@ -34,11 +35,18 @@ def spawn_xy_from_env(text: str) -> tuple[float, float]:
     return v[0], v[1]
 
 
+MODEL_INSTANCE = (
+    "maverick_0"
+    if os.environ.get("MAVERICK_DRONE", "small").lower() == "x500"
+    else "maverick_small_0"
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default=os.environ.get("CAMERA_BRIDGE_ADDR", "10.231.1.3"))
     ap.add_argument("--port", type=int, default=proto.DEFAULT_PORT)
-    ap.add_argument("--model", default="maverick_0")
+    ap.add_argument("--model", default=MODEL_INSTANCE)
     ap.add_argument("--world", default=os.environ.get("PX4_GZ_WORLD", "textured"))
     ap.add_argument("--hz", type=float, default=30.0)
     ap.add_argument("--seed", type=int, default=1)

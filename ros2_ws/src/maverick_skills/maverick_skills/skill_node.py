@@ -30,6 +30,7 @@ import time
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from maverick_mapping import topics as T
+from maverick_mapping.drone import drone_config
 from maverick_mapping.ros_conv import camera_euler, occupancy_to_grid, pose_to_tr
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
@@ -48,13 +49,16 @@ class SkillNode(Node):
     def __init__(self) -> None:
         super().__init__("skill_node")
         p = self.declare_parameter
+        drone = drone_config(str(p("drone", "").value) or None)  # "" -> MAVERICK_DRONE
         self.cfg = SkillConfig(
             altitude=float(p("altitude", 1.2).value),
             speed=float(p("speed", 0.8).value),
             default_budget_s=float(p("default_budget_s", 360.0).value),
+            planner=drone.planner(),
         )
         self.require_hover = bool(p("require_hover", True).value)
-        self.cam_fwd = float(p("camera_forward_m", 0.12).value)  # camera_mount.json x
+        # camera_mount.json x
+        self.cam_fwd = float(p("camera_forward_m", drone.camera_forward_m).value)
         self.event_log = str(p("event_log", "/tmp/skill_events.jsonl").value)
         self.skill = None
         self.robot_xy: tuple[float, float] | None = None

@@ -14,8 +14,7 @@ from maverick_bridge.camera_pose import (
 )
 
 ROOT = Path(__file__).resolve().parents[4]
-MOUNT_JSON = ROOT / "sim/models/maverick/camera_mount.json"
-MODEL_SDF = ROOT / "sim/models/maverick/model.sdf"
+MODELS = ["maverick", "maverick_small"]
 
 
 def mount(xyz=(0.12, 0.0, 0.10), rpy=(0.0, 0.0, 0.0)) -> CameraMount:
@@ -115,9 +114,12 @@ def test_intrinsics_scale_by_two():
     assert math.isclose(Fx, 216.248, abs_tol=1e-3) and Fx == Fy
 
 
-def test_mount_json_matches_model_sdf():
+@pytest.mark.parametrize("model", MODELS)
+def test_mount_json_matches_model_sdf(model):
+    MOUNT_JSON = ROOT / f"sim/models/{model}/camera_mount.json"
     j = json.loads(MOUNT_JSON.read_text())
-    sdf = MODEL_SDF.read_text()
+    sdf = (ROOT / f"sim/models/{model}/model.sdf").read_text()
+    sdf = sdf[sdf.index("<link name='camera_link'>") :]  # the camera link only
     pose = re.search(r"<pose relative_to='base_link'>([^<]+)</pose>", sdf).group(1).split()
     assert [float(v) for v in pose] == pytest.approx(j["xyz_flu"] + j["rpy_flu"])
     fovs = {float(v) for v in re.findall(r"<horizontal_fov>([^<]+)</horizontal_fov>", sdf)}

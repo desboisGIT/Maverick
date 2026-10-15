@@ -6,6 +6,7 @@ Thresholds are the exit tests in docs/s2-plan.md (hover, item 3) and docs/s3-pla
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 
 from referee.scoring import ARM_DISARMED, deviation, flight_phase_t, hover_reference
@@ -21,7 +22,9 @@ EST_ERR_MAX_M = 0.30
 EST_MIN_FLIGHT_Z = 0.4  # ground-truth height above ground below which samples are ignored
 C2_CLEAR_M = 1.0
 C2_MARGIN_M = 0.05
-BODY_RADIUS_M = 0.39  # x500 circumscribed radius
+# circumscribed radius of the simulated drone (MAVERICK_DRONE=small|x500, default small); the
+# referee's own copy of the number, the drone stack takes its from maverick_mapping.drone
+BODY_RADIUS_M = 0.39 if os.environ.get("MAVERICK_DRONE", "small").lower() == "x500" else 0.15
 CAPABILITY_SCENARIOS = ("explore", "goto_room")  # scored on held-out seeds for exit results
 
 

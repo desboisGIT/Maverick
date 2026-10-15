@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 
@@ -33,7 +34,7 @@ class DroneProfile:
         return min(self.door_widths_dm) + 4
 
 
-# 3.5-5 inch drone: today's values.
+# 3.5 inch ducted quad, 0.30 m across with guards (circumscribed radius 0.15 m).
 SMALL = DroneProfile(
     "small",
     (8, 9, 10),
@@ -58,4 +59,7 @@ X500 = DroneProfile(
 )
 
 PROFILES = {p.name: p for p in (SMALL, X500)}
-DEFAULT_PROFILE = "x500"
+# One switch for the whole repo: MAVERICK_DRONE=small|x500 (default small).
+DEFAULT_PROFILE = os.environ.get("MAVERICK_DRONE", "small").lower()
+if DEFAULT_PROFILE not in PROFILES:
+    raise ValueError(f"MAVERICK_DRONE={DEFAULT_PROFILE!r}: expected one of {sorted(PROFILES)}")

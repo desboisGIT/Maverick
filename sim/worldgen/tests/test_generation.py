@@ -6,7 +6,7 @@ import pytest
 from worldgen import generate, seed_set, world_name
 from worldgen.cli import main
 from worldgen.manifest import HELD_OUT_SEEDS, TUNING_SEEDS
-from worldgen.profile import PROFILES
+from worldgen.profile import DEFAULT_PROFILE, PROFILES
 from worldgen.programme import FLAT_TYPES
 from worldgen.validate import validate
 from worldgen.walls import build_walls
@@ -162,9 +162,10 @@ def test_door_openings_wider_than_drone(drone):
                 assert d["width"] >= PROFILES[drone].open_min_dm / 10 - 1e-6
 
 
-def test_x500_is_default_and_profiles_differ():
-    assert generate(4).manifest["drone_profile"] == "x500"
-    assert generate(4).sdf != generate(4, drone="small").sdf
+def test_small_is_default_and_profiles_differ():
+    # default follows MAVERICK_DRONE (small unless set)
+    assert generate(4).manifest["drone_profile"] == DEFAULT_PROFILE
+    assert generate(4, drone="x500").sdf != generate(4, drone="small").sdf
     assert generate(4, drone="small").sdf == generate(4, drone="small").sdf
 
 

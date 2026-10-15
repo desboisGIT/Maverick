@@ -13,13 +13,21 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 Mat = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
 Vec = tuple[float, float, float]
 
-DEFAULT_MOUNT_PATH = "/maverick/sim/models/maverick/camera_mount.json"
+
+def _mount_dir() -> str:
+    """Model directory of the drone selected by MAVERICK_DRONE (small | x500, default small)."""
+    x500 = os.environ.get("MAVERICK_DRONE", "small").lower() == "x500"
+    return "maverick" if x500 else "maverick_small"
+
+
+DEFAULT_MOUNT_PATH = f"/maverick/sim/models/{_mount_dir()}/camera_mount.json"
 
 # FLU <-> FRD is the same diagonal flip in both directions.
 _FLIP: Mat = ((1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, -1.0))

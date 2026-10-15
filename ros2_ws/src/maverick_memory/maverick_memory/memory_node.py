@@ -29,6 +29,7 @@ import time
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from maverick_mapping import topics as T
+from maverick_mapping.drone import drone_config
 from maverick_mapping.ros_conv import (
     RateLimiter,
     SyncBuffer,
@@ -47,7 +48,7 @@ from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 
 from .queries import answer_query, detections_json
-from .scene_graph import SceneGraph
+from .scene_graph import SceneGraph, SceneGraphConfig
 from .semantic_detector import SemanticDetector
 from .sim_detector import DetectorNoise
 
@@ -68,7 +69,14 @@ class MemoryNode(Node):
             mask_dropout=float(p("mask_dropout", 0.05).value),
         )
         self.detector = SemanticDetector(noise, seed=int(p("seed", 0).value))
-        self.sg = SceneGraph()
+        drone = drone_config(str(p("drone", "").value) or None)  # "" -> MAVERICK_DRONE
+        self.sg = SceneGraph(
+            SceneGraphConfig(
+                robot_clear=drone.goal_clear,
+                connect_clear=drone.connect_clear,
+                wall_clear=drone.wall_clear,
+            )
+        )
         self.sync = SyncBuffer(
             ["semantic", "depth", "pose"], tol=float(p("sync_tol_s", 0.03).value)
         )

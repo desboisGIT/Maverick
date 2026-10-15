@@ -104,8 +104,8 @@ def test_typing_rules():
     assert open_plan.confidence < 0.7
 
 
-def _ideal_grid(seed: int, res: float = 0.1):
-    sc = Scene.from_seed(seed)
+def _ideal_grid(seed: int, res: float = 0.1, drone: str = "x500"):
+    sc = Scene.from_seed(seed, drone)
     lo, hi = sc.bounds
     org = (lo[0] - 0.45, lo[1] - 0.45)
     nx, ny = int((hi[0] - lo[0] + 0.9) / res), int((hi[1] - lo[1] + 0.9) / res)

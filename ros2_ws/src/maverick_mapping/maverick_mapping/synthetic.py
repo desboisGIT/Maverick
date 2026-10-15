@@ -103,10 +103,10 @@ class Scene:
         return Scene.from_sdf(world.sdf, world.manifest)
 
     @staticmethod
-    def from_seed(seed: int) -> Scene:
+    def from_seed(seed: int, drone: str | None = None) -> Scene:
         from worldgen import generate
 
-        return Scene.from_world(generate(seed))
+        return Scene.from_world(generate(seed, drone=drone) if drone else generate(seed))
 
     @property
     def n_boxes(self) -> int:

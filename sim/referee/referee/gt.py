@@ -1,6 +1,6 @@
 """Ground truth from Gazebo transport. Runs INSIDE the referee container.
 
-  GZ_PARTITION=<sim hostname>:<user> python3 -m referee.gt [--model maverick_0] [--world textured]
+  GZ_PARTITION=<sim hostname>:<user> python3 -m referee.gt [--model maverick_small_0] [--world X]
 
 Prints one JSON line per pose update (throttled to ~20 Hz): wall-clock arrival time and the
 model position in the Gazebo world frame (ENU, metres). The referee is the only component that
@@ -14,14 +14,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import threading
 import time
 
+MODEL_INSTANCE = (
+    "maverick_0"
+    if os.environ.get("MAVERICK_DRONE", "small").lower() == "x500"
+    else "maverick_small_0"
+)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="maverick_0")
+    parser.add_argument("--model", default=MODEL_INSTANCE)
     parser.add_argument("--world", default="textured")
     parser.add_argument("--hz", type=float, default=20.0)
     args = parser.parse_args()
