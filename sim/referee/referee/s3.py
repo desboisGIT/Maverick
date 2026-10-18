@@ -43,6 +43,7 @@ from referee.s3_verdicts import (
     goto_metrics,
     hover_metrics,
     label_reason,
+    old_rule_pass,
     seed_set_of,
     summarise,
     verdict_explore,
@@ -372,8 +373,10 @@ def run_explore(stack: Stack, world: dict, out: Path, i: int, args, goto: bool) 
         gm.update(goto_m)
         gv = verdict_goto(gm)
         rec["goto"] = {"verdict": "pass" if gv.passed else "fail", "reason": gv.reason, **gm}
+        rec["goto"]["old_rule_pass"] = old_rule_pass(gm)
         if args.scenario == "goto_room":  # C2 is the verdict of this scenario
             rec["verdict"], rec["reason"] = rec["goto"]["verdict"], gv.reason
+            rec["old_rule_pass"] = rec["goto"]["old_rule_pass"]
     return rec
 
 

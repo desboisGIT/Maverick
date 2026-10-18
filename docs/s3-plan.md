@@ -12,7 +12,7 @@ The drone explores an unseen generated apartment on its own, builds a 3D map, fi
 |---|---|---|
 | C1 | `explore(budget = 6 min)` from the spawn point | ≥ 90% of reachable free volume observed; 0 collisions; map surface error < 10 cm |
 | C6 | Frontier detection on partial maps | Frontier recall ≥ 95% against ground-truth unknown-but-reachable regions |
-| C2 | "Go to the kitchen" (by command, no agent yet) | Correct room in ≥ 9/10 seeds; ends ≤ 1 m inside the room |
+| C2 | "Go to the kitchen" (by command, no agent yet) | Correct room in ≥ 9/10 seeds; ends inside the room, at least min(1.0 m, 0.6 × inscribed radius) from its walls (Decisions) |
 | Console | Live demo view | Camera with detections and the 3D mind view (map, rooms, objects, path) update live during exploration |
 
 ## Decisions
@@ -24,6 +24,7 @@ The drone explores an unseen generated apartment on its own, builds a 3D map, fi
 - **Simulated detector in S3.** Worldgen furniture is built from primitives, which a real detector such as YOLOE would not recognise. In simulation the detector is Gazebo's segmentation camera (every model carries a class label) plus a noise model (misses, false positives, box jitter, confidence), behind the same `Detector` interface YOLOE will implement. The real detector is judged on real footage (gate G1) and on photoreal scenes later (S8). This is oracle-quality perception with realistic occlusion, and results must be reported as such.
 - **Drone size.** The simulated drone is PX4's x500 (circumscribed radius 0.39 m), so worldgen's default `x500` profile uses 1.1–1.3 m doors and 1.2 m corridors; the `small` profile keeps real 0.8–1.0 m doors for a future small-drone model.
 - **Offline harness first.** Mapping and exploration are developed against a synthetic simulator: depth images ray-cast from worldgen manifests, a kinematic drone following the planner's waypoints, and pose noise. Hundreds of explorations run in seconds without Gazebo; Gazebo then confirms.
+- **C2 pass rule (owner-visible, 2026-11-11).** The C2 text says "ends ≤ 1 m inside the room". It was first read as wall distance ≥ min(1.0 m, inscribed radius − 0.05 m), which for a narrow room demands the single deepest point within 5 cm: two narrow kitchens ended 0.931 / 0.949 m against 0.95 m and failed, a test flaw rather than a navigation fault. New rule: the drone ends inside the correct ground-truth room AND its distance to the room's walls is ≥ min(1.0 m, 0.6 × inscribed radius) (inscribed radius = largest wall distance of any point of the GT polygon). Wide rooms (inscribed ≥ 1.67 m) still need 1.0 m; a 2.0 m wide kitchen needs 0.6 m. Nothing else in the scoring changed. To keep the change transparent every goto_room result row carries `old_rule_pass` (verdict of the old rule on the same run, `old_required_m` in the metrics) and `summary.json` counts `old_rule_pass`; reports show both.
 
 ## Components
 

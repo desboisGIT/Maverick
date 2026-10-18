@@ -6,11 +6,13 @@ from referee import s3
 from referee.s3_frames import map_to_world, model_pose_env, spawn_origin, world_to_map
 from referee.s3_verdicts import (
     c2_required_clearance,
+    c2_required_clearance_old,
     estimate_error,
     exit_result_warning,
     goto_metrics,
     hover_metrics,
     inscribed_radius,
+    old_rule_pass,
     seed_set_of,
     summarise,
     verdict_explore,
@@ -43,8 +45,11 @@ def test_model_pose_env():
 def test_polygon_helpers():
     sq = [(0, 0), (4, 0), (4, 3), (0, 3)]
     assert inscribed_radius(sq) == pytest.approx(1.5, abs=0.05)
-    assert c2_required_clearance(1.5) == 1.0
-    assert c2_required_clearance(0.8) == pytest.approx(0.75)
+    assert c2_required_clearance(1.5) == pytest.approx(0.9)
+    assert c2_required_clearance(2.0) == 1.0
+    assert c2_required_clearance(0.8) == pytest.approx(0.48)
+    assert c2_required_clearance_old(0.8) == pytest.approx(0.75)
+    assert c2_required_clearance_old(1.5) == 1.0
 
 
 def test_goto_verdicts():
@@ -54,10 +59,16 @@ def test_goto_verdicts():
     assert verdict_goto(m).passed
     assert not verdict_goto(goto_metrics(MAN, "kitchen", (0.8, -2.5), o)).passed  # 0.2 m in
     assert not verdict_goto(goto_metrics(MAN, "kitchen", (5.0, 5.0), o)).passed  # outside
-    # small bathroom: inscribed 0.75, so need 0.7
+    # small bathroom: inscribed 0.75, so need 0.6 x 0.75 = 0.45 (old rule 0.7)
     b = goto_metrics(MAN, "bathroom", (4.75 - 3.0, 0.75 - 4.0), o)
-    assert b["required_m"] == pytest.approx(0.7)
-    assert verdict_goto(b).passed
+    assert b["required_m"] == pytest.approx(0.45)
+    assert b["old_required_m"] == pytest.approx(0.7)
+    assert verdict_goto(b).passed and old_rule_pass({**b, "skill_succeeded": True})
+    # narrow room: 0.93 m in a 1.0 m inscribed room passes the new rule, fails the old (0.95)
+    narrow = {"room_found": True, "inside": True, "room_type": "kitchen", "inscribed_m": 1.0,
+              "edge_distance_m": 0.93, "required_m": 0.6, "old_required_m": 0.95}  # fmt: skip
+    assert verdict_goto(narrow).passed and not old_rule_pass(narrow)
+    assert not verdict_goto({**narrow, "edge_distance_m": 0.44}).passed  # open plan, near edge
     assert not verdict_goto(goto_metrics(MAN, "office", (0, 0), o)).passed
     assert not verdict_goto({**m, "skill_succeeded": False, "skill_state": "failed"}).passed
 

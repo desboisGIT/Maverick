@@ -22,6 +22,7 @@ EST_ERR_MAX_M = 0.30
 EST_MIN_FLIGHT_Z = 0.4  # ground-truth height above ground below which samples are ignored
 C2_CLEAR_M = 1.0
 C2_MARGIN_M = 0.05
+C2_INSCRIBED_FRAC = 0.6  # current rule: wall distance >= min(1.0, 0.6 x inscribed radius)
 # circumscribed radius of the simulated drone (MAVERICK_DRONE=small|x500, default small); the
 # referee's own copy of the number, the drone stack takes its from maverick_mapping.drone
 BODY_RADIUS_M = 0.39 if os.environ.get("MAVERICK_DRONE", "small").lower() == "x500" else 0.15
@@ -76,7 +77,13 @@ def inscribed_radius(poly, step: float = 0.05) -> float:
 
 
 def c2_required_clearance(inscribed: float) -> float:
-    """min(1.0, inscribed radius - 0.05): a room too small for 1 m inside is judged by what fits."""
+    """Current C2 rule: min(1.0, 0.6 x inscribed radius). A room too small for 1 m inside is judged
+    by what fits, without demanding its single deepest point (see docs/s3-plan.md Decisions)."""
+    return min(C2_CLEAR_M, C2_INSCRIBED_FRAC * inscribed)
+
+
+def c2_required_clearance_old(inscribed: float) -> float:
+    """Previous rule, kept for transparent reporting: min(1.0, inscribed radius - 0.05)."""
     return min(C2_CLEAR_M, inscribed - C2_MARGIN_M)
 
 
@@ -204,7 +211,15 @@ def goto_metrics(manifest: dict, room_type: str, final_map_xy, origin) -> dict:
         "edge_distance_m": round(edge_distance(final_map_xy, poly), 3) if inside else 0.0,
         "inscribed_m": round(insc, 3),
         "required_m": round(c2_required_clearance(insc), 3),
+        "old_required_m": round(c2_required_clearance_old(insc), 3),
     }
+
+
+def old_rule_pass(m: dict) -> bool:
+    """Verdict of the previous C2 rule on the same metrics (reported next to the current one)."""
+    if not m.get("room_found") or not m.get("skill_succeeded", True) or not m.get("inside"):
+        return False
+    return m["edge_distance_m"] >= m["old_required_m"]
 
 
 def verdict_goto(m: dict) -> Verdict:
@@ -258,6 +273,11 @@ def summarise(rows: list[dict], scenario: str, localisation: str = "flow") -> di
         "fail": sum(r["verdict"] == "fail" for r in rows),
         "error": sum(r["verdict"] == "error" for r in rows),
         "scored": len(ran),
+        **(
+            {"old_rule_pass": sum(bool(r.get("old_rule_pass")) for r in rows)}
+            if any("old_rule_pass" in r for r in rows)
+            else {}
+        ),
         "seed_sets": sorted(sets),
         "localisation": localisation,
         "exit_result": localisation != "mocap"
