@@ -87,3 +87,30 @@ All results "with mocap" (not exit results), x500, explore budget 360 s, 0.03 m 
 - [E] Replanning can dither between two distant frontiers early on (seed 11: reversal after 3 s); stronger hysteresis or a commit-to-door rule would help.
 - [F] `test_websocket_server_handshake_burst_broadcast_and_input` in maverick_gateway times out in the container, with or without these changes.
 - [F] S1 regression after these changes (`just test-failsafe --runs-per-case 3`, mocap off): 14/15 pass; F3 #2 "host flight process killed: never disarmed" (landing never completed). The change touches no flight client, bridge or PX4 code; whether this is the known intermittent land failure is [NV] (not rerun).
+
+## Small drone (2026-11-11)
+
+Owner decision: the simulated drone is now the small indoor quad (0.30 m across with guards, circumscribed radius 0.15 m, about 0.5 kg; sim/px4/README.md "Small drone"), because the x500 cannot pass real doors (0.7-0.9 m) and almost all S3 failures were door-frame scrapes. `MAVERICK_DRONE=small|x500` (default small) selects model, airframe, worldgen profile and the planner/skills/memory/referee numbers (`maverick_mapping.drone`; the drone stack takes its radius from there, not from the manifest or ground truth). Planner values for 0.15 m (same logic as the x500: hard radius = body + margin, squeeze radius body + 0.07 with fallbacks body + 0.04 / + 0.01): margin 0.20 (x500 0.22), tight 0.22, fallbacks 0.19 / 0.16, start-free radius 0.27, unknown radius 0.25, goal clearance 0.30, camera 0.07 m ahead of the body. x500 values are unchanged and tested.
+
+Platform checks [F]: hover 20/20 (altitude error <= 0.062 m, drift <= 0.15 m, rate loop quiet), S1 failsafe suite 15/15, S2 hover in 10 generated worlds (flow only) 8/10 (drift 0.30 and 0.37 m against the 0.3 m limit, x500 baseline 10/10); details in sim/px4/README.md.
+
+**Bug found and fixed (also affects the x500 results above)** [F]: `WaypointFollower.set()` (called at every replan, every 3 s) cleared the "send this waypoint" flag that `update()` had just raised when the drone reached a waypoint and the replan's first waypoint was the next target. The drone then waited at the previous waypoint until the skill timed out ("could not reach the kitchen in time") or its stuck counter ran out. It hit 3 of 5 goto_room runs on the small drone at first. The replan also reset the stuck timer, hiding the stall; both fixed, with unit tests.
+
+Other changes: goto goal anchored on any key object of the type (fridge, oven or counter for the kitchen) instead of the fridge only, furniture footprints count as room when measuring the goal's distance to the room edge, small-drone goal tolerance 0.15 m and wall clearance 1.25 m, arrival radii 0.12 / 0.10 m (hold jitter is a few cm), the referee keeps `stack-host.log` / `stack-sim.log` per run.
+
+Results with mocap (not exit results), small drone, explore budget 360 s [F]:
+
+| Set | Scenario | Coverage | Collisions | Pass |
+|---|---|---|---|---|
+| tuning 10-14 | explore | 0.973 / 0.994 / 0.987 / 0.992 / 0.987 | 0 / 0 / 0 / 0 / 0 | 4/5 (seed 14: one estimate-error sample 0.57 m, mean 0.044 m) |
+| tuning 10-14 | goto_room (final code, mixed: seeds 10-11 ran before the furniture fix) | 0.97-0.99 | 0 | 1/5 (ended 0.71 / 0.88 / 1.20 pass / 0.29 / 0.82 m inside, need 0.95-1.0) |
+| held-out 1000000-04 | explore | 0.985 / 0.982 / 0.976 / 0.889 / 0.967 | 0 / 0 / 0 / 0 / 0 | 4/5 (seed 1000003: coverage 0.889 < 0.9) |
+| held-out 1000000-04 | goto_room | 0.989 / 0.988 / 0.974 / 0.982 / 0.985 | 0 / 0 / 0 / 0 / 1 | 1/5 |
+
+x500 for comparison (above): held-out explore 0/5 pass with 1-14 collisions, goto_room 0/5. With the small drone collisions are essentially gone (min clearance 0.15-0.29 m) and the skills always arrive; what fails is where the goal ends up.
+
+**Open issues (small drone)**
+- [F] goto_room verdict (needs 1.0 m, or inscribed radius - 0.05, inside the true room): 4 of 5 held-out failures are goal placement. Two missed by 1-20 mm in narrow kitchens (0.931 and 0.949 m against 0.95): the room region from the map is a few cm off the true walls and a goal in a 2.0 m wide kitchen must be within 5 cm of the centre. Two ended 0.33 and 0.44 m inside: the kitchen is open plan with the living room, the segmentation merges them and the goal lands at the merged region's near edge (seed 13 tuning: same). Ideas [H]: split open-plan regions at the objects' extent (kitchen objects' bounding box plus 1 m), goal at the largest clearance inside the object cluster's side of the region, a finer goal search (tolerance 0.02 instead of 0.05 around the best clearance).
+- [F] S2 flow-only hover drift 0.30 / 0.37 m in two of ten generated worlds (x500 on its own worlds 10/10); cause not found, flow quality in the generated floors is poor for both drones [H].
+- [F] Tuning explore seed 14 fails the estimate-error gate on a single 0.57 m sample (mean 0.044 m): not investigated.
+- [NV] The held-out numbers are one run of the final code each; seed-to-seed run noise was not measured.

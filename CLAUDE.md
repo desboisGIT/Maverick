@@ -35,6 +35,7 @@ Everything runs in Docker through `just` (recipes in `justfile`). Host setup onc
 ## Decisions code must respect
 
 - Simulation is Gazebo Harmonic + PX4 SITL + ROS 2 Jazzy, run in Ubuntu 24.04 Docker containers. The host runs Ubuntu 26.04, which PX4/Harmonic/Isaac Sim don't list as supported. Isaac Sim is a later, optional stage.
+- The simulated drone is the small indoor quad (3.5 inch ducted class, 0.30 m across with guards, about 0.5 kg; `MAVERICK_DRONE=small`, default); the x500 is kept as an option (`MAVERICK_DRONE=x500`). One switch selects model, airframe, worldgen profile and the planner/referee body radius.
 - LLMs and VLMs only call a typed skill API (explore, goto, search, inspect, follow, monitor, return, report). They never send setpoints. Flight-critical loops stay on PX4.
 - Losing Wi-Fi or the GPU host must never cause uncontrolled flight. There is no onboard companion computer: PX4 holds position on optical flow + rangefinder indoors (GPS outdoors), and its offboard-loss failsafe holds, then lands. A small bridge board only streams sensors and relays setpoints (dropping stale ones); VIO, mapping, obstacle checks and all models run offboard.
 - The 16 GB VRAM budget is shared between the simulator and all local models, so check VRAM before adding a model.
