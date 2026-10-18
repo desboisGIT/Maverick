@@ -1,6 +1,6 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-compose := "docker compose -f docker/compose.yaml"
+compose := "scripts/compose.sh"
 
 # List available recipes
 default:

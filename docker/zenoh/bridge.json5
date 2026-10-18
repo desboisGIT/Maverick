@@ -3,6 +3,7 @@
 // allow.subscribers = local DDS subscribers fed from Zenoh
 // Everything else (all other /fmu/*, /rosout, services, actions, ...) is not routed.
 // Keep in sync with docs/s1-plan.md "Topics across the link" and host.json5.
+// Endpoint addresses are for stack 0; the entrypoint rewrites 10.231.2. with $WIFI_PREFIX.
 {
   plugins: {
     ros2dds: {

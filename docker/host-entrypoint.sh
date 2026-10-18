@@ -23,8 +23,10 @@ case "${MAVERICK_HOST_LAUNCH:-none}" in
     *) echo "[host] unknown MAVERICK_HOST_LAUNCH=${MAVERICK_HOST_LAUNCH}" >&2 ;;
 esac
 
+# Endpoints in the json5 are written for stack 0 (10.231.2.x); WIFI_PREFIX moves them per stack.
+sed "s/10\.231\.2\./${WIFI_PREFIX:-10.231.2.}/g" /maverick/docker/zenoh/host.json5 >/tmp/zenoh.json5
 while true; do   # restart if it ever exits (e.g. the bridge was not up yet)
-    zenoh-bridge-ros2dds -c /maverick/docker/zenoh/host.json5 &
+    zenoh-bridge-ros2dds -c /tmp/zenoh.json5 &
     ZENOH_PID=$!
     wait "$ZENOH_PID"
     sleep 1
