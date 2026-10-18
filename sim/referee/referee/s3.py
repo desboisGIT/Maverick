@@ -14,6 +14,8 @@ Runs on the HOST machine (stdlib only) and drives `docker compose` like referee.
      goto_room: as explore, then `{"skill":"goto_room","room_type":"kitchen"}`;
   4. ground truth (Gazebo pose, referee container) and PX4 state (px4_monitor) are recorded the
      whole time; metrics are computed in the tools container (numpy, referee.s3_metrics).
+Parallel: `--jobs K` / `--stacks 1,2,3` spread the runs over K stacks (referee.stackcfg); each
+results.jsonl line gets `stack` and `rtf` (Gazebo real-time factor during the run).
 Output: runs/s3-<scenario>-<timestamp>/ (results.jsonl, summary.json, raw-*.json, map dumps).
 Capability scenarios (explore, goto_room) on tuning seeds print a warning and are marked
 `exit_result: false`: exit results come from held-out seeds only.
@@ -24,13 +26,16 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import shlex
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
 
+from referee.parallel import run_queue
 from referee.s3_frames import model_pose_env
 from referee.s3_verdicts import (
     estimate_error,
@@ -44,7 +49,8 @@ from referee.s3_verdicts import (
     verdict_goto,
     verdict_hover,
 )
-from referee.stack import ROOT, Stack
+from referee.stack import ROOT, Stack, down_all, rtf_summary
+from referee.stackcfg import parse_stacks
 
 sys.path.insert(0, str(ROOT / "sim" / "worldgen"))
 
@@ -61,6 +67,9 @@ TAKEOFF_TIMEOUT_S = 90.0
 GOTO_TIMEOUT_S = 200.0
 LAND_TIMEOUT_S = 90.0
 SEED_SET_START = {"tuning": 0, "held_out": 1_000_000}
+
+
+RTF_BY_RUN: dict[tuple[int, int], dict | None] = {}  # (thread, run index) -> RTF summary
 
 
 class RunError(Exception):
@@ -90,8 +99,10 @@ def make_world(seed: int) -> dict:
     WORLDS_DIR.mkdir(parents=True, exist_ok=True)
     sdf = WORLDS_DIR / f"{world.name}.sdf"
     man = WORLDS_DIR / f"{world.name}.json"
-    sdf.write_text(world.sdf)
-    man.write_text(world.manifest_json())
+    for path, text in ((sdf, world.sdf), (man, world.manifest_json())):
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(text)
+        tmp.replace(path)  # atomic: parallel runs of one seed write identical files
     return {"name": world.name, "manifest": world.manifest, "sdf": sdf, "manifest_path": man}
 
 
@@ -383,11 +394,20 @@ def run_one(stack: Stack, scenario: str, seed: int, out: Path, i: int, args) -> 
         stack, world, "none" if scenario == "hover" else "s3", getattr(args, "localisation", "flow")
     )
     stack.restart()
+    rtf_stream = stack.start_rtf(world["name"])
     try:
         if scenario == "hover":
-            return run_hover(stack, world, out, i, args)
-        return run_explore(stack, world, out, i, args, goto=scenario == "goto_room")
+            rec = run_hover(stack, world, out, i, args)
+        else:
+            rec = run_explore(stack, world, out, i, args, goto=scenario == "goto_room")
+        return rec
     finally:
+        stack.exec("referee", "pkill -f '[r]eferee.rtf'; true", timeout=30)
+        rtf_stream.stop()
+        rtf = rtf_summary(rtf_stream.rows)
+        if rtf:
+            print(f"  [stack {stack.index}] seed {seed} real-time factor {rtf}", flush=True)
+        RTF_BY_RUN[(threading.get_ident(), i)] = rtf
         save_logs(stack, out / f"run-{i:03d}-{world['name']}")
         stack.down()
 
@@ -432,10 +452,19 @@ def main(argv: list[str] | None = None) -> int:
         help="position source: flow (PX4 flow only), mocap (simulated motion capture, NOT an "
         "exit result), vo (host visual odometry)",
     )
+    ap.add_argument("--jobs", type=int, default=1, help="parallel stacks (default 1)")
+    ap.add_argument(
+        "--stacks",
+        help="stack indices, e.g. 1,2,3 (default: 0 for one job, else 1..jobs)",
+    )
     ap.add_argument("--no-build", action="store_true", help="skip colcon build")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
 
+    try:
+        stack_ids = parse_stacks(args.jobs, args.stacks)
+    except ValueError as exc:
+        ap.error(str(exc))
     seeds = pick_seeds(args)
     sets = {seed_set_of(s) for s in seeds}
     warn = exit_result_warning(args.scenario, sets)
@@ -444,17 +473,15 @@ def main(argv: list[str] | None = None) -> int:
 
     out = args.out or ROOT / "runs" / f"s3-{args.scenario}-{datetime.now():%Y%m%d-%H%M%S}"
     out.mkdir(parents=True, exist_ok=True)
-    stack = Stack()
-    if not args.no_build:
-        print("colcon build ...", flush=True)
-        stack.build_workspace()
+    stacks = {i: Stack(index=i) for i in stack_ids}
     rows: list[dict] = []
     t_suite = time.time()
-    try:
-        for i, seed in enumerate(seeds):
+
+    def make_worker(sid: int):
+        def work(i: int, seed: int) -> dict:
             t_run = time.time()
             try:
-                rec = run_one(stack, args.scenario, seed, out, i, args)
+                rec = run_one(stacks[sid], args.scenario, seed, out, i, args)
             except Exception as exc:  # noqa: BLE001 - a broken run must not end the suite
                 rec = {"verdict": "error", "reason": f"{type(exc).__name__}: {exc}", "metrics": {}}
             rec = {
@@ -464,20 +491,36 @@ def main(argv: list[str] | None = None) -> int:
                 "seed_set": seed_set_of(seed),
                 "localisation": args.localisation,
                 "duration_s": round(time.time() - t_run, 1),
+                "rtf": RTF_BY_RUN.pop((threading.get_ident(), i), None),
                 **rec,
             }
             rec["reason"] = label_reason(rec["reason"], args.localisation)
-            rows.append(rec)
-            with (out / "results.jsonl").open("a") as f:
-                f.write(json.dumps(rec, allow_nan=True) + "\n")
-            print(
-                f"{args.scenario} seed {seed}: {rec['verdict'].upper()} {rec['reason']}", flush=True
-            )
+            return rec
+
+        return work
+
+    def on_result(_i: int, _sid: int, rec: dict) -> None:
+        rows.append(rec)
+        with (out / "results.jsonl").open("a") as f:
+            f.write(json.dumps(rec, allow_nan=True) + "\n")
+        print(
+            f"[stack {rec['stack']}] {args.scenario} seed {rec['seed']}: "
+            f"{rec['verdict'].upper()} {rec['reason']}",
+            flush=True,
+        )
+
+    try:
+        if not args.no_build:
+            print("colcon build ...", flush=True)
+            stacks[stack_ids[0]].build_workspace()
+        run_queue(seeds, stack_ids, make_worker, on_result)
     finally:
+        rows.sort(key=lambda r: r["run"])
         summary = summarise(rows, args.scenario, args.localisation)
         summary["wall_s"] = round(time.time() - t_suite)
+        summary["stacks"] = stack_ids
         (out / "summary.json").write_text(json.dumps(summary, indent=2))
-        stack.down()
+        down_all(list(stacks.values()))
     print(json.dumps(summary, indent=2))
     print(f"Results in {out}")
     return 0 if summary["pass"] == summary["runs"] else 1

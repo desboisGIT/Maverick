@@ -14,7 +14,9 @@ if [ "$#" -gt 0 ]; then exec "$@"; fi
 MicroXRCEAgent udp4 -p 8888 &
 AGENT_PID=$!
 export CYCLONEDDS_URI=file:///maverick/docker/zenoh/cyclonedds-localhost.xml
-zenoh-bridge-ros2dds -c /maverick/docker/zenoh/bridge.json5 &
+# Endpoints in the json5 are written for stack 0 (10.231.2.x); WIFI_PREFIX moves them per stack.
+sed "s/10\.231\.2\./${WIFI_PREFIX:-10.231.2.}/g" /maverick/docker/zenoh/bridge.json5 >/tmp/zenoh.json5
+zenoh-bridge-ros2dds -c /tmp/zenoh.json5 &
 ZENOH_PID=$!
 
 # The relay needs the workspace built (`just ws-build`). It is deliberately not restarted if it

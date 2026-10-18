@@ -1,4 +1,5 @@
 // zenoh-bridge-ros2dds on the host PC. Mirror image of bridge.json5.
+// Endpoint addresses are for stack 0; the entrypoint rewrites 10.231.2. with $WIFI_PREFIX.
 {
   plugins: {
     ros2dds: {

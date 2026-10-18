@@ -6,7 +6,7 @@
 #           bad (300 ms +- 200 ms, 20% loss), outage (100% loss), clear (same as lab).
 set -euo pipefail
 PROFILE="${1:-}"
-WIFI_PREFIX="${WIFI_PREFIX:-10.231.2.}"   # wifi network subnet 10.231.2.0/24 (compose.yaml)
+WIFI_PREFIX="${WIFI_PREFIX:-10.231.2.}"   # wifi network prefix (compose.yaml sets it per stack)
 
 IFACE="$(ip -o -4 addr show | awk -v p="$WIFI_PREFIX" 'index($4, p) == 1 {print $2; exit}')"
 [ -n "$IFACE" ] || { echo "no interface in ${WIFI_PREFIX}0/24" >&2; exit 1; }

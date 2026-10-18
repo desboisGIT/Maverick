@@ -1,6 +1,6 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-compose := "docker compose -f docker/compose.yaml"
+compose := "scripts/compose.sh"
 
 # List available recipes
 default:
@@ -39,6 +39,13 @@ sim gui="0":
 down:
     {{compose}} down --timeout 10
 
+# Bring down every parallel stack (compose projects maverick-s*); never touches `maverick` (stack 0)
+stacks-down:
+    #!/usr/bin/env bash
+    for p in $(docker compose ls -a --format json | python3 -c 'import json,sys; [print(x["Name"]) for x in json.load(sys.stdin) if x["Name"].startswith("maverick-s")]'); do
+        docker compose -p "$p" down --timeout 10
+    done
+
 # Open a login shell in a running service (sim, bridge, host or referee)
 shell service="sim":
     {{compose}} exec {{service}} bash -l
@@ -69,13 +76,15 @@ lint:
     {{compose}} --profile tools run --rm -T tools bash -lc "cd /maverick && ruff check ."
 
 # Randomised failsafe suite F1/F2/F3/F4/F6 (runs on the host, drives docker compose).
-# e.g. `just test-failsafe --runs-per-case 3 --seed 1`, `--cases F3,F4`
+# e.g. `just test-failsafe --runs-per-case 3 --seed 1`, `--cases F3,F4`;
+# in parallel: `--jobs 3 --stacks 1,2,3` (stacks 1.. only; stack 0 is the default `maverick`)
 test-failsafe *args:
     PYTHONPATH=sim/referee python3 -m referee.failsafe {{args}}
 
 # S3 scenarios in generated apartments (runs on the host, drives docker compose):
 # e.g. `just test-s3 --scenario hover --seed-set held_out --runs 10`,
 # `just test-s3 --scenario explore --seeds 1000000 --budget 360`, `--scenario goto_room ...`
+# in parallel: `--jobs 3` (stacks 1..3) or `--stacks 1,2`
 test-s3 *args:
     PYTHONPATH=sim/referee python3 -m referee.s3 {{args}}
 
