@@ -14,6 +14,8 @@ import threading
 import time
 from pathlib import Path
 
+from referee import stackcfg
+
 ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = ROOT / "docker" / "compose.yaml"
 READY_TIMEOUT_S = 150
@@ -22,12 +24,12 @@ READY_TIMEOUT_S = 150
 class Stream:
     """A long-running `docker exec` whose stdout is JSON lines, collected with a reader thread."""
 
-    def __init__(self, name: str, argv: list[str]) -> None:
+    def __init__(self, name: str, argv: list[str], env: dict[str, str] | None = None) -> None:
         self.name = name
         self.rows: list[dict] = []
         self.garbage: list[str] = []
         self._proc = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1
+            argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env
         )
         self._thread = threading.Thread(target=self._read, daemon=True)
         self._thread.start()
@@ -58,9 +60,11 @@ class Stream:
 
 
 class Stack:
-    def __init__(self, compose_file: Path = COMPOSE_FILE) -> None:
+    def __init__(self, compose_file: Path = COMPOSE_FILE, index: int = 0) -> None:
         self.compose_file = compose_file
+        self.index = index  # stack 0 = the default `maverick` project; N >= 1 see stackcfg
         self.env = dict(os.environ)
+        self.env.update(stackcfg.stack_env(index))  # project name, subnets, gateway port
         self.env["DOCKER_GID"] = str(os.stat("/var/run/docker.sock").st_gid)
         self.env["HEADLESS"] = "1"
         self.gz_partition: str | None = None
@@ -92,7 +96,7 @@ class Stack:
         )
 
     def stream(self, name: str, service: str, cmd: str, env=None) -> Stream:
-        return Stream(name, self.exec_argv(service, cmd, env))
+        return Stream(name, self.exec_argv(service, cmd, env), self.env)
 
     # -- lifecycle ---------------------------------------------------------------------------
     def build_workspace(self) -> None:
@@ -153,3 +157,31 @@ class Stack:
         host = self.exec("sim", "hostname", timeout=30).stdout.strip()
         user = self.exec("sim", "whoami", timeout=30).stdout.strip()
         self.gz_partition = f"{host}:{user}"
+
+    # -- real-time factor --------------------------------------------------------------------
+    def start_rtf(self, world: str = "textured") -> Stream:
+        """Gazebo's real-time factor (1 Hz JSON lines {t, rtf}), read in the referee container."""
+        env = {"GZ_PARTITION": self.gz_partition or "", "PYTHONPATH": "/maverick/sim/referee"}
+        return self.stream("rtf", "referee", f"exec python3 -m referee.rtf --world {world}", env)
+
+
+def rtf_summary(rows: list[dict]) -> dict | None:
+    """min / mean / p05 of the RTF samples of one run (None without samples)."""
+    vals = sorted(r["rtf"] for r in rows if "rtf" in r)
+    if not vals:
+        return None
+    return {
+        "min": round(vals[0], 3),
+        "p05": round(vals[int(0.05 * (len(vals) - 1))], 3),
+        "mean": round(sum(vals) / len(vals), 3),
+        "n": len(vals),
+    }
+
+
+def down_all(stacks: list[Stack]) -> None:
+    """Bring every stack down in parallel (used from `finally`, also after Ctrl-C)."""
+    threads = [threading.Thread(target=s.down) for s in stacks]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()

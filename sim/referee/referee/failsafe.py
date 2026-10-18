@@ -10,6 +10,9 @@ Runs on the HOST machine and drives the stack with `docker compose`. In the cont
 Faults: tc netem windows on bridge+host, pkill of the flight client (F3) or of the relay (F4),
 bad goals through inject_goals (F6).
 
+Parallel: `--jobs K` (or `--stacks 1,2,3`) runs K stacks (compose projects maverick-s<N>, own
+subnets and ports, see referee.stackcfg) from one work queue; each line gets a `stack` field.
+
 The stack is reused between runs when the previous run ended landed and disarmed with nothing
 killed and netem cleared; otherwise it is restarted. Output: runs/s1-failsafe-<timestamp>/
 results.jsonl (one line per run) and summary.json.
@@ -28,8 +31,10 @@ from datetime import datetime
 from pathlib import Path
 
 from referee import faults
+from referee.parallel import run_queue
 from referee.scoring import SCORERS, RunData, Verdict, hover_reference
-from referee.stack import ROOT, Stack
+from referee.stack import ROOT, Stack, down_all, rtf_summary
+from referee.stackcfg import parse_stacks
 
 CASES = ("F1", "F2", "F3", "F4", "F6")
 FLIGHT_BIN = "/maverick/ros2_ws/install/maverick_flight/lib/maverick_flight"
@@ -285,11 +290,96 @@ def run_case(stack: Stack, case: str, params: dict) -> tuple[Verdict, dict]:
 
 
 # -- suite -----------------------------------------------------------------------------------
+class StackWorker:
+    """Runs jobs on one stack; reuses the stack between runs when it ended clean."""
+
+    def __init__(self, stack: Stack, seed: int) -> None:
+        self.stack = stack
+        self.seed = seed
+        self.needs_restart = True
+
+    def __call__(self, _index: int, job: tuple[str, int]) -> dict:
+        case, i = job
+        stack = self.stack
+        rng = random.Random(f"{self.seed}/{case}/{i}")
+        params = sample_params(case, rng)
+        record: dict | None = None
+        restarted = None
+        t_run = time.time()
+        rtf: dict | None = None
+        for attempt in range(1, RETRY_ATTEMPTS + 1):
+            t_run = time.time()
+            restarted = None
+            if self.needs_restart:
+                restarted = round(stack.restart(), 1)
+            rtf_stream = stack.start_rtf()
+            try:
+                verdict, facts = run_case(stack, case, params)
+            except RunError as exc:
+                self.needs_restart = True
+                record = {"verdict": "error", "reason": f"infrastructure: {exc}", "metrics": {}}
+                print(f"  {case}#{i} attempt {attempt}: infrastructure error: {exc}", flush=True)
+                continue
+            except Exception as exc:  # noqa: BLE001 - a broken run must not end the suite
+                self.needs_restart = True
+                record = {"verdict": "error", "reason": f"exception: {exc!r}", "metrics": {}}
+                print(f"  {case}#{i} attempt {attempt}: exception {exc!r}", flush=True)
+                continue
+            finally:
+                stack.exec("referee", "pkill -f '[r]eferee.rtf'; true", timeout=30)
+                rtf_stream.stop()
+                rtf = rtf_summary(rtf_stream.rows)
+            self.needs_restart = not (
+                facts["ended_disarmed"]
+                and facts["ended_landed"]
+                and not facts["killed"]
+                and facts["netem_cleared"]
+                and facts["flight_exited"]
+            )
+            record = {
+                "verdict": "pass" if verdict.passed else "fail",
+                "reason": verdict.reason,
+                "metrics": verdict.metrics,
+                "facts": facts,
+            }
+            break
+        assert record is not None
+        line = {
+            "case": case,
+            "run": i,
+            "seed": self.seed,
+            "params": {k: v for k, v in params.items() if k != "goals"},
+            "attempts": attempt,
+            "stack_restarted_s": restarted,
+            "duration_s": round(time.time() - t_run, 1),
+            "rtf": rtf,
+            **record,
+        }
+        if case == "F6":
+            line["params"]["goals"] = params["goals"]
+        return line
+
+
+def summarise_cases(rows: list[dict], cases: list[str]) -> dict[str, dict]:
+    summary = {c: {"runs": 0, "pass": 0, "fail": 0, "error": 0} for c in cases}
+    for r in rows:
+        s = summary[r["case"]]
+        s["runs"] += 1
+        s[r["verdict"] if r["verdict"] in ("pass", "fail") else "error"] += 1
+    return summary
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--cases", default=",".join(CASES))
     ap.add_argument("--runs-per-case", type=int, default=3)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--jobs", type=int, default=1, help="parallel stacks (default 1)")
+    ap.add_argument(
+        "--stacks",
+        help="stack indices to use, e.g. 1,2,3 (default: 0 for one job, else 1..jobs). "
+        "Stack 0 is the default `maverick` project; see sim/referee/referee/stackcfg.py",
+    )
     ap.add_argument("--no-build", action="store_true", help="skip colcon build")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
@@ -297,102 +387,48 @@ def main(argv: list[str] | None = None) -> int:
     for c in cases:
         if c not in CASES:
             ap.error(f"unknown case {c}")
+    try:
+        stack_ids = parse_stacks(args.jobs, args.stacks)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     out = args.out or ROOT / "runs" / f"s1-failsafe-{datetime.now():%Y%m%d-%H%M%S}"
     out.mkdir(parents=True, exist_ok=True)
     results = out / "results.jsonl"
-    stack = Stack()
-    if not args.no_build:
-        print("colcon build ...", flush=True)
-        stack.build_workspace()
-    needs_restart = True
-    summary: dict[str, dict] = {c: {"runs": 0, "pass": 0, "fail": 0, "error": 0} for c in cases}
+    stacks = {i: Stack(index=i) for i in stack_ids}
+    jobs = [(case, i) for case in cases for i in range(args.runs_per_case)]
+    done: list[dict] = []
     t_suite = time.time()
+
+    def on_result(_i: int, _sid: int, rec: dict) -> None:
+        done.append(rec)
+        with results.open("a") as f:
+            f.write(json.dumps(rec, allow_nan=True) + "\n")
+        print(
+            f"[stack {rec['stack']}] {rec['case']} #{rec['run']}: {rec['verdict'].upper()} "
+            f"({rec['duration_s']} s) {rec['reason']}",
+            flush=True,
+        )
+
     try:
-        for case in cases:
-            for i in range(args.runs_per_case):
-                rng = random.Random(f"{args.seed}/{case}/{i}")
-                params = sample_params(case, rng)
-                record = None
-                for attempt in range(1, RETRY_ATTEMPTS + 1):
-                    t_run = time.time()
-                    restarted = None
-                    if needs_restart:
-                        restarted = round(stack.restart(), 1)
-                    try:
-                        verdict, facts = run_case(stack, case, params)
-                    except RunError as exc:
-                        needs_restart = True
-                        record = {
-                            "verdict": "error",
-                            "reason": f"infrastructure: {exc}",
-                            "metrics": {},
-                        }
-                        print(
-                            f"  {case}#{i} attempt {attempt}: infrastructure error: {exc}",
-                            flush=True,
-                        )
-                        continue
-                    except Exception as exc:  # noqa: BLE001 - a broken run must not end the suite
-                        needs_restart = True
-                        record = {
-                            "verdict": "error",
-                            "reason": f"exception: {exc!r}",
-                            "metrics": {},
-                        }
-                        print(f"  {case}#{i} attempt {attempt}: exception {exc!r}", flush=True)
-                        continue
-                    needs_restart = not (
-                        facts["ended_disarmed"]
-                        and facts["ended_landed"]
-                        and not facts["killed"]
-                        and facts["netem_cleared"]
-                        and facts["flight_exited"]
-                    )
-                    record = {
-                        "verdict": "pass" if verdict.passed else "fail",
-                        "reason": verdict.reason,
-                        "metrics": verdict.metrics,
-                        "facts": facts,
-                    }
-                    break
-                assert record is not None
-                line = {
-                    "case": case,
-                    "run": i,
-                    "seed": args.seed,
-                    "params": {k: v for k, v in params.items() if k != "goals"},
-                    "attempts": attempt,
-                    "stack_restarted_s": restarted,
-                    "duration_s": round(time.time() - t_run, 1),
-                    **record,
-                }
-                if case == "F6":
-                    line["params"]["goals"] = params["goals"]
-                with results.open("a") as f:
-                    f.write(json.dumps(line, allow_nan=True) + "\n")
-                s = summary[case]
-                s["runs"] += 1
-                s[
-                    "pass"
-                    if record["verdict"] == "pass"
-                    else "fail"
-                    if record["verdict"] == "fail"
-                    else "error"
-                ] += 1
-                print(
-                    f"{case} #{i}: {record['verdict'].upper()} ({line['duration_s']} s) "
-                    f"{record['reason']}",
-                    flush=True,
-                )
+        if not args.no_build:
+            print("colcon build ...", flush=True)
+            stacks[stack_ids[0]].build_workspace()
+        run_queue(jobs, stack_ids, lambda sid: StackWorker(stacks[sid], args.seed), on_result)
     finally:
+        summary = summarise_cases(done, cases)
         (out / "summary.json").write_text(
             json.dumps(
-                {"seed": args.seed, "wall_s": round(time.time() - t_suite), "cases": summary},
+                {
+                    "seed": args.seed,
+                    "stacks": stack_ids,
+                    "wall_s": round(time.time() - t_suite),
+                    "cases": summary,
+                },
                 indent=2,
             )
         )
-        stack.down()
+        down_all(list(stacks.values()))
     print("\nSummary (pass/runs):")
     for c, s in summary.items():
         print(f"  {c}: {s['pass']}/{s['runs']}  fail {s['fail']}  error {s['error']}")
