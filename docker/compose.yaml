@@ -67,6 +67,7 @@ services:
       # 182911235 = 10.231.1.3 as an integer (the bridge's address on `drone`).
       PX4_PARAM_UXRCE_DDS_AG_IP: "${MAVERICK_XRCE_AGENT_IP_INT:-182911235}"
       CAMERA_BRIDGE_ADDR: "${MAVERICK_DRONE_NET:-10.231.1}.3"   # camera and mocap drivers -> bridge
+      CAMERA_DRIVER: "${CAMERA_DRIVER:-1}"   # 0: no camera streaming, so Gazebo does not render (much faster, S1 tests)
     deploy:
       resources:
         reservations:
