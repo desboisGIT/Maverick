@@ -18,9 +18,10 @@ from dataclasses import dataclass
 
 import numpy as np
 from maverick_mapping import explore_offline as eo
+from maverick_mapping.drone import drone_config
 from maverick_mapping.synthetic import CameraSim, Scene
 
-from .scene_graph import SceneGraph
+from .scene_graph import SceneGraph, SceneGraphConfig
 from .sim_detector import DetectorNoise, SimDetector
 
 FRAME_DT = 0.3
@@ -65,9 +66,16 @@ def polygon_edge_distance(p: tuple[float, float], poly: list) -> float:
 def run_seed(seed: int, ec: EvalConfig | None = None) -> dict:
     ec = ec or EvalConfig()
     t0 = time.perf_counter()
-    scene = Scene.from_seed(seed)
+    drone = drone_config(None)  # MAVERICK_DRONE, default small
+    scene = Scene.from_seed(seed, drone=drone.name)
     man = scene.manifest
-    sg = SceneGraph()
+    sg = SceneGraph(
+        SceneGraphConfig(
+            robot_clear=drone.goal_clear,
+            connect_clear=drone.connect_clear,
+            wall_clear=drone.wall_clear,
+        )
+    )
     state = {"det": None, "n": 0, "det_s": 0.0, "n_det": 0, "n_fp": 0}
 
     class RecordingCam(CameraSim):
@@ -168,7 +176,7 @@ def score(man: dict, sg: SceneGraph, grid, res: float, org, ec: EvalConfig) -> d
         edge = np.array([polygon_edge_distance((x, y), kit["polygon"]) for x, y in
                          zip(px[g], py[g], strict=True)])  # fmt: skip
         gt_max = float(edge.max()) if len(edge) else 0.0
-        need = min(ec.c2_clear, gt_max - 0.05)
+        need = min(ec.c2_clear, 0.6 * gt_max)  # docs/s3-plan.md C2 rule
         out = sg.goal_for_type("kitchen", start=(sx, sy))
         c2["c2_gt_inscribed_m"] = round(gt_max, 2)
         if out is not None:

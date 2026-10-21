@@ -270,27 +270,31 @@ def segment_rooms(
         holes = _fill_holes(m) & ~m & (out_lab == 0)
         out_lab[holes] = c
     out_lab = _grow(out_lab, (grid == OCC) | barrier | (out_lab == 0) & (grid != -1), cfg.grow)
+    return [
+        region_from_mask(out_lab == c, free_masks[c], res, origin, cfg.simplify)
+        for c in range(1, k + 1)
+    ]
+
+
+def region_from_mask(
+    mask: np.ndarray, free: np.ndarray, res: float, origin: tuple[float, float], simplify: float
+) -> RoomRegion:
+    """RoomRegion (area, centroid, outline, stable cell keys) of a cell mask."""
     ox, oy = abs_offset(origin, res)
-    regions = []
-    for c in range(1, k + 1):
-        m = out_lab == c
-        ii, jj = np.nonzero(m)
-        keys = (ii + ox + _K // 2).astype(np.int64) * _K + (jj + oy + _K // 2)
-        cen = (
-            float(origin[0] + (ii.mean() + 0.5) * res),
-            float(origin[1] + (jj.mean() + 0.5) * res),
-        )
-        regions.append(
-            RoomRegion(
-                m,
-                free_masks[c],
-                float(m.sum() * res * res),
-                cen,
-                mask_outline(m, res, origin, cfg.simplify),
-                np.sort(keys),
-            )
-        )
-    return regions
+    ii, jj = np.nonzero(mask)
+    keys = (ii + ox + _K // 2).astype(np.int64) * _K + (jj + oy + _K // 2)
+    cen = (
+        float(origin[0] + (ii.mean() + 0.5) * res),
+        float(origin[1] + (jj.mean() + 0.5) * res),
+    )
+    return RoomRegion(
+        mask,
+        free,
+        float(mask.sum() * res * res),
+        cen,
+        mask_outline(mask, res, origin, simplify),
+        np.sort(keys),
+    )
 
 
 class RoomTracker:

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .lifting import Detection, ObjectObservation, lift_detection
-from .room_typing import RoomType, TypingConfig, score_room
+from .room_typing import TYPES, RoomType, TypingConfig, score_room
 from .rooms import (
     FREE,
     RoomConfig,
@@ -16,8 +16,10 @@ from .rooms import (
     RoomTracker,
     distance_cells,
     label4,
+    region_from_mask,
     segment_rooms,
 )
+from .rooms_split import SplitConfig, split_by_clusters
 from .store import ObjectStore, StoreConfig, StoredObject, canonical_label
 
 LABELS = {
@@ -36,6 +38,12 @@ class SceneGraphConfig:
     store: StoreConfig = field(default_factory=StoreConfig)
     rooms: RoomConfig = field(default_factory=RoomConfig)
     typing: TypingConfig = field(default_factory=TypingConfig)
+    split: SplitConfig = field(default_factory=SplitConfig)
+    # open plan: a region holding furniture clusters of two types, each at least this strong
+    # (weight x confidence summed over its objects), is split between them
+    split_min_score: float = 2.5
+    split_min_weight: float = 1.5  # an object only seeds a type it votes for at least this much
+    split_ambiguity: float = 0.4  # ... and whose runner-up vote is below this fraction (sink)
     room_snap: float = 0.5  # m: a point this close to a room counts as inside it
     robot_clear: float = 0.45  # m: navigation goals keep this far from any obstacle
     # connectivity of the start to the goal room is judged with this (smaller) clearance: doors are
@@ -89,6 +97,7 @@ class SceneGraph:
         self._origin = (0.0, 0.0)
         self._lab = np.zeros((0, 0), np.int32)
         self._list: list[Room] = []
+        self._base: list[tuple[str, RoomRegion]] = []  # (id, region) before the open-plan split
 
     # --- objects ------------------------------------------------------------------------------
     def add_observations(self, obs: list[ObjectObservation], now: float | None = None) -> None:
@@ -129,31 +138,78 @@ class SceneGraph:
         """Re-segment the 2D map (int8 -1/0/100, grid[ix, iy]); ids stay stable across calls."""
         self._grid, self._res, self._origin = np.asarray(grid), float(res), tuple(origin)
         regions = segment_rooms(self._grid, res, origin, self.cfg.rooms)
-        ids = self.tracker.assign(regions)
+        self._base = list(zip(self.tracker.assign(regions), regions, strict=True))
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        """Rooms from the base regions: split open-plan regions by furniture, type them."""
+        if self._grid is None:
+            return
+        res = self._res
+        # objects -> base regions (label map without splits)
+        lab = np.zeros(self._grid.shape, np.int32)
+        for k, (_, reg) in enumerate(self._base):
+            lab[reg.mask] = k + 1
+        self._lab = lab
+        self._list = [self._make_room(rid, reg, k) for k, (rid, reg) in enumerate(self._base)]
+        self._assign_objects()
+        final: list[tuple[str, RoomRegion]] = []
+        for (rid, reg), room in zip(self._base, self._list, strict=True):
+            parts = self._split_region(reg, self.objects_in(room.id))
+            if parts is None:
+                final.append((rid, reg))
+                continue
+            for t, m in parts.items():
+                final.append(
+                    (
+                        f"{rid}:{t}",
+                        region_from_mask(
+                            m, m & reg.free, res, self._origin, self.cfg.rooms.simplify
+                        ),
+                    )
+                )
         self._lab = np.zeros(self._grid.shape, np.int32)
         self._list = []
         self.rooms = {}
-        for k, (rid, reg) in enumerate(zip(ids, regions, strict=True)):
-            elong, width = _shape(reg.free, res)
-            room = Room(
-                rid,
-                "unknown",
-                0.0,
-                {},
-                None,
-                reg.polygon,
-                reg.centroid,
-                reg.area,
-                elong,
-                width,
-                reg,
-            )
-            room.idx = k
+        for k, (rid, reg) in enumerate(final):
+            room = self._make_room(rid, reg, k)
             self._lab[reg.mask] = k + 1
             self._list.append(room)
             self.rooms[rid] = room
         self._assign_objects()
         self._type_rooms()
+
+    def _make_room(self, rid: str, reg: RoomRegion, k: int) -> Room:
+        elong, width = _shape(reg.free, self._res)
+        room = Room(
+            rid, "unknown", 0.0, {}, None, reg.polygon, reg.centroid, reg.area, elong, width, reg
+        )
+        room.idx = k
+        return room
+
+    def _split_region(self, reg: RoomRegion, objs: list[StoredObject]):
+        """Parts {type: mask} of an open-plan region (furniture of two types), else None."""
+        cfg = self.cfg
+        seeds: dict[str, list[tuple[float, float, float, float]]] = {}
+        score: dict[str, float] = {}
+        for o in objs:
+            w = cfg.typing.weights.get(o.label)
+            if not w:
+                continue
+            votes = sorted(((v, t) for t, v in w.items() if t in TYPES and t != "hallway"))[::-1]
+            if not votes or votes[0][0] < cfg.split_min_weight:
+                continue
+            if len(votes) > 1 and votes[1][0] >= cfg.split_ambiguity * votes[0][0]:
+                continue
+            t = votes[0][1]
+            seeds.setdefault(t, []).append(
+                (float(o.lo[0]), float(o.lo[1]), float(o.hi[0]), float(o.hi[1]))
+            )
+            score[t] = score.get(t, 0.0) + votes[0][0] * min(1.0, o.confidence + 0.15)
+        seeds = {t: v for t, v in seeds.items() if score[t] >= cfg.split_min_score}
+        if len(seeds) < 2:
+            return None
+        return split_by_clusters(reg.mask, reg.free, seeds, self._res, self._origin, cfg.split)
 
     def _type_rooms(self) -> None:
         by_room: dict[str, list[tuple[str, float]]] = {}
@@ -171,8 +227,7 @@ class SceneGraph:
 
     def retype(self) -> None:
         """Re-type rooms after new objects arrived (cheap; no map re-segmentation)."""
-        self._assign_objects()
-        self._type_rooms()
+        self._rebuild()
 
     def room_list(self) -> list[Room]:
         return list(self._list)
