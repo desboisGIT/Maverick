@@ -45,6 +45,7 @@ Everything runs in Docker through `just` (recipes in `justfile`). Host setup onc
 - Outdoor flight is in scope under ideal conditions (no wind, bright daylight): the drone has GPS, and outdoors it relies on GPS + barometer, not optical flow.
 - The drone must work in any home with no prior map. Develop on randomly generated apartments and report results only on held-out layouts, never on layouts used for tuning (including the owner's flat).
 - The drone's stack (bridge, host containers) must never read simulator ground truth; only the referee does (simulation plan §2.1).
+- S3 C2 (goto_room) passes when the drone ends inside the correct room at least min(1.0 m, 0.6 x inscribed radius) from its walls (docs/s3-plan.md Decisions); results rows also carry `old_rule_pass` (the former min(1.0, inscribed - 0.05) rule). The drone's goto goal is the deepest reachable point of the room; open-plan regions are split by furniture clusters in `maverick_memory/rooms_split.py`.
 - Design docs tag claims [F] verified, [E] estimate, [H] hypothesis, [NV] not verified. Keep that convention.
 
 As later stages land, add the high-level architecture here: how voice/NLU, the agent, the executive (skills), mapping/perception and flight control connect.
