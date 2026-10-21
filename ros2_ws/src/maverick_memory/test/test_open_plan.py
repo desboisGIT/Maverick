@@ -133,3 +133,34 @@ def test_lone_counter_does_not_split_and_best_kitchen_wins():
     sg2.update_rooms(g, RES, ORG)
     room, _ = sg2.goal_for_type("kitchen", start=(2.0, 2.0))
     assert room.centroid[0] > 8.0
+
+
+def _two_zones(gap_cells: int) -> np.ndarray:
+    """3 m wide room, 7 m long, wall stubs on both sides at y = 4 m leaving `gap_cells` cells."""
+    g = _box_grid(3.0, 7.0)
+    stub = (30 - gap_cells) // 2
+    for x in list(range(0, stub)) + list(range(30 - stub, 30)):
+        g[x, 40] = OCC
+    return g
+
+
+def test_evidence_free_region_behind_a_wide_opening_joins_its_neighbour():
+    # a wall stub (or a plant against the wall) fakes the end of a wall: the 2.2 m opening is
+    # no door, the top part has no furniture of its own and belongs to the kitchen
+    sg = SceneGraph(SceneGraphConfig(wall_clear=3.0, robot_clear=0.3))
+    for k, (lab, y) in enumerate((("kitchen_counter", 1.0), ("oven", 2.0), ("fridge", 3.0))):
+        _obj(sg, k, lab, 1.0, y, 0.6, 0.9)
+    sg.update_rooms(_two_zones(22), RES, ORG)
+    rooms = sg.room_list()
+    assert len(rooms) == 1 and rooms[0].type == "kitchen"
+    assert sg.room_of((1.5, 6.0)).id == rooms[0].id
+    _, goal = sg.goal_for_type("kitchen", start=(1.5, 2.0))
+    assert sg.room_of(goal).id == rooms[0].id and 1.2 < goal[0] < 1.8  # mid-width of the room
+
+
+def test_door_width_opening_keeps_rooms_apart():
+    sg = SceneGraph()
+    for k, (lab, y) in enumerate((("kitchen_counter", 1.0), ("oven", 2.0), ("fridge", 3.0))):
+        _obj(sg, k, lab, 1.0, y, 0.6, 0.9)
+    sg.update_rooms(_two_zones(10), RES, ORG)  # 1.0 m door
+    assert len(sg.room_list()) == 2

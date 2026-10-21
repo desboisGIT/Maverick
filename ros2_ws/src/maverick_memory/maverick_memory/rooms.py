@@ -248,9 +248,20 @@ def segment_rooms(
     origin: tuple[float, float],
     cfg: RoomConfig | None = None,
 ) -> list[RoomRegion]:
+    return segment_rooms_ex(grid, res, origin, cfg)[0]
+
+
+def segment_rooms_ex(
+    grid: np.ndarray,
+    res: float,
+    origin: tuple[float, float],
+    cfg: RoomConfig | None = None,
+) -> tuple[list[RoomRegion], dict[tuple[int, int], float]]:
+    """Regions plus their contacts: {(i, j): length in m of the virtual barrier between regions
+    i < j}, i.e. how wide the opening that was closed between them is."""
     cfg = cfg or RoomConfig()
     if grid.size == 0:
-        return []
+        return [], {}
     free = grid == FREE
     barrier = _opening_barriers(grid, res, cfg)
     lab, n = label4(free & ~barrier)
@@ -264,16 +275,35 @@ def segment_rooms(
             out_lab[m] = k
             free_masks[k] = m
     if k == 0:
-        return []
+        return [], {}
+    contacts = _barrier_contacts(out_lab, barrier, res)
     # fill furniture holes (only cells not claimed by another region), then grow into walls
     for c, m in free_masks.items():
         holes = _fill_holes(m) & ~m & (out_lab == 0)
         out_lab[holes] = c
     out_lab = _grow(out_lab, (grid == OCC) | barrier | (out_lab == 0) & (grid != -1), cfg.grow)
-    return [
+    regions = [
         region_from_mask(out_lab == c, free_masks[c], res, origin, cfg.simplify)
         for c in range(1, k + 1)
     ]
+    return regions, contacts
+
+
+def _barrier_contacts(lab: np.ndarray, barrier: np.ndarray, res: float):
+    """Barrier cells touching two different regions (4-neighbourhood), counted per region pair."""
+    nx, ny = lab.shape
+    pad = np.pad(lab, 1)
+    out: dict[tuple[int, int], float] = {}
+    for i, j in zip(*np.nonzero(barrier), strict=True):
+        near = {
+            int(v)
+            for v in (pad[i, j + 1], pad[i + 2, j + 1], pad[i + 1, j], pad[i + 1, j + 2])
+            if v
+        }
+        if len(near) == 2:
+            a, b = sorted(near)
+            out[(a - 1, b - 1)] = out.get((a - 1, b - 1), 0.0) + res
+    return out
 
 
 def region_from_mask(

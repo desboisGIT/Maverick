@@ -17,7 +17,7 @@ from .rooms import (
     distance_cells,
     label4,
     region_from_mask,
-    segment_rooms,
+    segment_rooms_ex,
 )
 from .rooms_split import SplitConfig, split_by_clusters
 from .store import ObjectStore, StoreConfig, StoredObject, canonical_label
@@ -45,6 +45,10 @@ class SceneGraphConfig:
     split_min_objects: int = 2  # a lone counter across a wall-less boundary is no second kitchen
     split_min_weight: float = 1.5  # an object only seeds a type it votes for at least this much
     split_ambiguity: float = 0.4  # ... and whose runner-up vote is below this fraction (sink)
+    # a region with no evidence of its own (typed hallway / unknown) that touches another region
+    # through one closed opening at least this wide (a door is under ~1.3 m) is part of it: a plant
+    # against the wall can fake the end of a wall and cut a kitchen in two
+    merge_contact: float = 1.5
     room_snap: float = 0.5  # m: a point this close to a room counts as inside it
     robot_clear: float = 0.45  # m: navigation goals keep this far from any obstacle
     # connectivity of the start to the goal room is judged with this (smaller) clearance: doors are
@@ -99,6 +103,7 @@ class SceneGraph:
         self._lab = np.zeros((0, 0), np.int32)
         self._list: list[Room] = []
         self._base: list[tuple[str, RoomRegion]] = []  # (id, region) before the open-plan split
+        self._contacts: dict[tuple[int, int], float] = {}  # base region pair -> opening width, m
 
     # --- objects ------------------------------------------------------------------------------
     def add_observations(self, obs: list[ObjectObservation], now: float | None = None) -> None:
@@ -138,7 +143,7 @@ class SceneGraph:
     def update_rooms(self, grid: np.ndarray, res: float, origin: tuple[float, float]) -> None:
         """Re-segment the 2D map (int8 -1/0/100, grid[ix, iy]); ids stay stable across calls."""
         self._grid, self._res, self._origin = np.asarray(grid), float(res), tuple(origin)
-        regions = segment_rooms(self._grid, res, origin, self.cfg.rooms)
+        regions, self._contacts = segment_rooms_ex(self._grid, res, origin, self.cfg.rooms)
         self._base = list(zip(self.tracker.assign(regions), regions, strict=True))
         self._rebuild()
 
@@ -154,8 +159,17 @@ class SceneGraph:
         self._lab = lab
         self._list = [self._make_room(rid, reg, k) for k, (rid, reg) in enumerate(self._base)]
         self._assign_objects()
+        self._type_rooms()
+        base = self._merge_weak(self._base)
+        if len(base) != len(self._base):
+            lab = np.zeros(self._grid.shape, np.int32)
+            for k, (_, reg) in enumerate(base):
+                lab[reg.mask] = k + 1
+            self._lab = lab
+            self._list = [self._make_room(rid, reg, k) for k, (rid, reg) in enumerate(base)]
+            self._assign_objects()
         final: list[tuple[str, RoomRegion]] = []
-        for (rid, reg), room in zip(self._base, self._list, strict=True):
+        for (rid, reg), room in zip(base, self._list, strict=True):
             parts = self._split_region(reg, self.objects_in(room.id))
             if parts is None:
                 final.append((rid, reg))
@@ -179,6 +193,33 @@ class SceneGraph:
             self.rooms[rid] = room
         self._assign_objects()
         self._type_rooms()
+
+    def _merge_weak(self, base: list[tuple[str, RoomRegion]]) -> list[tuple[str, RoomRegion]]:
+        """Fold regions without evidence into the neighbour they open widely onto."""
+        weak = {k for k, r in enumerate(self._list) if r.type in ("hallway", "unknown")}
+        into: dict[int, int] = {}
+        for k in weak:
+            # a dead end: one neighbour only (a real hallway has doors onto several rooms)
+            nb = {(b if a == k else a): w for (a, b), w in self._contacts.items() if k in (a, b)}
+            if len(nb) == 1:
+                other, width = next(iter(nb.items()))
+                if width >= self.cfg.merge_contact and other not in weak:
+                    into[k] = other
+        if not into:
+            return base
+        out = []
+        for k, (rid, reg) in enumerate(base):
+            if k in into:
+                continue
+            absorbed = [base[w][1] for w, tgt in into.items() if tgt == k]
+            if absorbed:
+                mask, free = reg.mask.copy(), reg.free.copy()
+                for a in absorbed:
+                    mask |= a.mask
+                    free |= a.free
+                reg = region_from_mask(mask, free, self._res, self._origin, self.cfg.rooms.simplify)
+            out.append((rid, reg))
+        return out
 
     def _make_room(self, rid: str, reg: RoomRegion, k: int) -> Room:
         elong, width = _shape(reg.free, self._res)
