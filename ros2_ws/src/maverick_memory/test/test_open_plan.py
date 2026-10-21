@@ -110,3 +110,26 @@ def test_split_parts_partition_the_mask_and_drop_tiny_parts():
     small = np.zeros_like(mask)
     small[1:20, 1:15] = True  # 2.7 m^2 region: below min_region_area
     assert split_by_clusters(small, small, tiny, RES, ORG) is None
+
+
+def test_lone_counter_does_not_split_and_best_kitchen_wins():
+    sg = SceneGraph()
+    _obj(sg, 0, "kitchen_counter", 4.0, 2.0, 0.6, 1.2)  # one stray counter in the living part
+    _obj(sg, 1, "sofa", 6.5, 2.0, 0.9, 1.9)
+    _obj(sg, 2, "tv_unit", 7.6, 2.0, 0.4, 1.4)
+    _obj(sg, 3, "coffee_table", 5.2, 2.0, 0.6, 1.1)
+    sg.update_rooms(_box_grid(8.0, 4.0), RES, ORG)
+    assert [r.type for r in sg.room_list()] == ["living"]  # not split: one counter only
+    # two kitchens in the scene graph: the one with the evidence is chosen, not the nearest
+    g = np.full((160, 40), FREE, np.int8)
+    g[0, :] = g[-1, :] = g[:, 0] = g[:, -1] = OCC
+    g[80, :] = OCC  # wall between two rooms
+    g[80, 15:25] = FREE
+    sg2 = SceneGraph()
+    _obj(sg2, 0, "kitchen_counter", 3.0, 2.0, 0.6, 1.2)  # west room: a counter
+    _obj(sg2, 1, "fridge", 12.0, 1.0)  # east room: fridge, oven, counter
+    _obj(sg2, 2, "oven", 12.0, 2.0)
+    _obj(sg2, 3, "kitchen_counter", 12.0, 3.0, 0.6, 1.2)
+    sg2.update_rooms(g, RES, ORG)
+    room, _ = sg2.goal_for_type("kitchen", start=(2.0, 2.0))
+    assert room.centroid[0] > 8.0

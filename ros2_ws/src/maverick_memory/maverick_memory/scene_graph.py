@@ -41,7 +41,8 @@ class SceneGraphConfig:
     split: SplitConfig = field(default_factory=SplitConfig)
     # open plan: a region holding furniture clusters of two types, each at least this strong
     # (weight x confidence summed over its objects), is split between them
-    split_min_score: float = 2.5
+    split_min_score: float = 4.0
+    split_min_objects: int = 2  # a lone counter across a wall-less boundary is no second kitchen
     split_min_weight: float = 1.5  # an object only seeds a type it votes for at least this much
     split_ambiguity: float = 0.4  # ... and whose runner-up vote is below this fraction (sink)
     room_snap: float = 0.5  # m: a point this close to a room counts as inside it
@@ -206,7 +207,11 @@ class SceneGraph:
                 (float(o.lo[0]), float(o.lo[1]), float(o.hi[0]), float(o.hi[1]))
             )
             score[t] = score.get(t, 0.0) + votes[0][0] * min(1.0, o.confidence + 0.15)
-        seeds = {t: v for t, v in seeds.items() if score[t] >= cfg.split_min_score}
+        seeds = {
+            t: v
+            for t, v in seeds.items()
+            if score[t] >= cfg.split_min_score and len(v) >= cfg.split_min_objects
+        }
         if len(seeds) < 2:
             return None
         return split_by_clusters(reg.mask, reg.free, seeds, self._res, self._origin, cfg.split)
@@ -277,6 +282,19 @@ class SceneGraph:
         if xy is None:
             return rs[0]
         return min(rs, key=lambda r: math.hypot(r.centroid[0] - xy[0], r.centroid[1] - xy[1]))
+
+    def best_room_of_type(self, room_type: str, xy=None):
+        """The room with the most evidence for the type (score of its objects); the nearest to xy
+        breaks ties. A kitchen with oven, fridge and counters beats one with a stray counter."""
+        rs = self.rooms_of_type(room_type) or [r for r in self._list if r.secondary == room_type]
+        if not rs:
+            return None
+
+        def key(r: Room):
+            d = 0.0 if xy is None else math.hypot(r.centroid[0] - xy[0], r.centroid[1] - xy[1])
+            return (-round(r.scores.get(room_type, 0.0), 1), d)
+
+        return min(rs, key=key)
 
     def visit(self, xy) -> None:
         """Mark the room the drone is in as visited (for the console)."""
@@ -356,9 +374,9 @@ class SceneGraph:
         return float(x[n]), float(y[n])
 
     def goal_for_type(self, room_type: str, start=None) -> tuple[Room, tuple[float, float]] | None:
-        """'Go to the kitchen': nearest room of the type and a goal in it (near its key objects
-        when the room is open plan)."""
-        room = self.nearest_room_of_type(room_type, start)
+        """'Go to the kitchen': the room with the most evidence for the type and a goal in it
+        (the deepest reachable point; key objects only break ties)."""
+        room = self.best_room_of_type(room_type, start)
         if room is None:
             return None
         # any of the type's key objects anchors the goal (a merged open-plan region has its
