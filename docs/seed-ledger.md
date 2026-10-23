@@ -18,4 +18,4 @@ Rules:
 
 | Seeds | First used | For |
 |---|---|---|
-| 1000100–1000109 | 2026-11-11 | S3 explore and goto_room (small drone, mocap) |
+| 1000100–1000109 | 2026-11-11 | S3 explore and goto_room (small drone, mocap): goto 8/10, explore 4/10. Reporting only, do not inspect |

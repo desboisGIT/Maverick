@@ -160,3 +160,14 @@ Before (single run, same seeds, small drone): goto 1/5 under the old rule (3/5 w
 - [F] A sim fault can leave a run without any map (1000000 run 1: 0 map frames); the referee scores it as a goto fail. A run-validity check (re-run when map_frames == 0) would keep such runs out of the table [H].
 - [E] Goto rows under the old rule are 5-7/10 on tuning and 6/10 on held-out: the old rule mostly measures how close the goal is to a room's deepest point, which is why it was replaced.
 - [NV] Detector noise is the only perception noise in the loop (oracle-quality simulated detector); results with a real detector will differ.
+
+## Fresh held-out results (2026-11-11)
+
+Seeds 1000000–1000004 were inspected during development and are retired (`docs/seed-ledger.md`). These are the first results on apartments nobody had looked at: seeds 1000100–1000109, small drone, simulated motion capture, one run each, 2 parallel stacks (mean real-time factor 0.97–1.01) [F]. With mocap, so not S3 exit results.
+
+| Scenario | Pass | Failures |
+|---|---|---|
+| goto_room (C2), current rule | **8/10** (old rule 5/10) | 1000101, 1000109: "stuck on the way to the kitchen" |
+| explore (C1, C6) | **4/10** | coverage 0.79 and 0.83 (1000101, 1000103); collisions 1 and 5 (1000101, 1000102); C6 recall 0.857 (1000104, 1000108); estimate error 0.37 m (1000100) |
+
+Explore passed 7/10 on the retired development seeds and 4/10 here, so part of the earlier tuning did not generalise [F]. These seeds are now the reporting set: do not inspect their runs; reproduce failure modes on tuning seeds.
