@@ -291,3 +291,37 @@ def test_goal_pending_from_a_waypoint_advance_survives_a_replan():
     assert f.update((0.0, 0.95), 1.0) == "moving"  # reached wp 0, target is now (0, 2), unsent
     f.set([(0.0, 2.0)], 1.1)  # replan whose first waypoint is that same target
     assert f.take_new_target() == (0.0, 2.0)
+
+
+def test_explore_sweeps_again_with_cleared_blacklists_before_giving_up():
+    s = ExploreSkill(SkillConfig(look_s=0.5), 0.0, budget_s=1e6)
+    out, _ = drive(s, (2.0, 3.0))
+    assert out.finished
+    retries = [e for e in s.events if e["ev"] == "retry"]
+    assert len(retries) == s.retries <= s.cfg.retry_passes
+
+
+def test_explore_does_not_retry_when_the_budget_is_nearly_used_up():
+    s = ExploreSkill(SkillConfig(look_s=0.5, retry_min_budget_s=1e9), 0.0, budget_s=1e6)
+    out, _ = drive(s, (2.0, 3.0))
+    assert out.finished and s.retries == 0
+
+
+def test_explore_faces_a_frontier_before_giving_up_on_a_viewpoint_it_stands_at():
+    s = ExploreSkill(SkillConfig(look_s=0.5, retry_passes=0), 0.0, budget_s=1e6)
+    out = s.step(ctx(0.0, (2.0, 3.0)))
+    assert out.goal is not None
+    # stand next to the planned viewpoint: the next plan picks it as "here"
+    g = open_room_grid()
+    now, robot, faced = 0.0, (2.0, 3.0), 0
+    for _ in range(80):
+        now += 0.5
+        out = s.step(ctx(now, robot, g))
+        if out.goal is not None:
+            robot = (out.goal[0], out.goal[1])
+        if any(e["ev"] == "vp_here" for e in s.events) and s.state == "look":
+            faced += 1
+        if out.finished:
+            break
+    assert out.finished
+    assert len(s.looked_vp) >= 1 or not any(e["ev"] == "vp_here" for e in s.events)

@@ -47,6 +47,16 @@ class PlannerConfig:
     gap_weight: float = 3.0
     fail_radius: float = 1.2  # frontier cells within this of a failed viewpoint are dropped
     band: tuple[float, float] = (0.3, 2.0)
+    # Careful flying (S3 tuning seeds 20-59: scrapes at door frames, overshoot at a viewpoint beside
+    # an unmapped frame, a reversal at speed through a door): path segments that pass within
+    # `careful_m` beyond the hard inflation of an obstacle or unobserved cell, and the two
+    # segments around a turn sharper than `turn_slow_rad`, are flown at the slow speed.
+    careful_m: float = 0.25
+    turn_slow_rad: float = 0.9
+    # a viewpoint is chosen among the reachable cells near a frontier by cost + weight x (number of
+    # clearance levels 0.3 / 0.4 / 0.5 m it falls within of an obstacle or unobserved cell)
+    vp_clear_weight: float = 1.0
+    vp_window: int = 5  # cells: how far from a frontier cell a viewpoint may be (was 4)
 
 
 def disk_offsets(radius_cells: float) -> list[tuple[int, int]]:
@@ -96,6 +106,8 @@ class PlanningGrid:
     origin: tuple[float, float]
     squeeze: np.ndarray | None = None  # passable only as a squeeze (tight < clearance < hard)
     escape: np.ndarray | None = None  # unblocked only so the robot can leave a too-close spot
+    near: np.ndarray | None = None  # within `careful_m` beyond the hard inflation: fly slowly
+    vp_pen: np.ndarray | None = None  # clearance levels (0..3) a viewpoint cell falls within
 
     def __post_init__(self) -> None:
         if self.squeeze is None:
@@ -162,6 +174,11 @@ class PlanningGrid:
             squeeze = squeeze & ~tm
             cost = np.where(tm, np.minimum(cost, 1.0 + cfg.squeeze_cost), cost)
         pg = PlanningGrid(blocked, los, cost, res, origin, squeeze)
+        pg.near = dilate(occ, (r_hard + cfg.careful_m) / res) | dilate(
+            unk, (cfg.unknown_radius + cfg.careful_m) / res
+        )
+        ou = occ | unk
+        pg.vp_pen = sum(dilate(ou, rk / res).astype(int) for rk in (0.30, 0.40, 0.50))
         if start_xy is not None:  # let the robot leave a spot that is slightly too close
             si, sj = pg.to_cell(start_xy)
             if (
@@ -334,6 +351,38 @@ def shorten_ex(
     return out, slow
 
 
+def mark_careful(
+    pg: PlanningGrid,
+    start_xy: tuple[float, float],
+    pts: list[tuple[float, float]],
+    slow: list[bool],
+    turn_slow_rad: float,
+) -> list[bool]:
+    """Slow flags (per waypoint, `pts` excludes the start) extended to segments that pass close
+    to obstacles or unobserved cells (`pg.near`) and to both segments around a sharp turn."""
+    out = list(slow)
+    if pg.near is None or not pts:
+        return out
+    path = [start_xy, *pts]
+    n0, n1 = pg.near.shape
+    for k in range(1, len(path)):
+        a, b = path[k - 1], path[k]
+        m = max(2, int(math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / (0.5 * pg.res))) + 1)
+        t = np.linspace(0.0, 1.0, m)
+        ii = np.floor((a[0] + t * (b[0] - a[0]) - pg.origin[0]) / pg.res).astype(int)
+        jj = np.floor((a[1] + t * (b[1] - a[1]) - pg.origin[1]) / pg.res).astype(int)
+        ok = (ii >= 0) & (jj >= 0) & (ii < n0) & (jj < n1)
+        if ok.any() and pg.near[ii[ok], jj[ok]].any():
+            out[k - 1] = True
+    for k in range(1, len(path) - 1):
+        h1 = math.atan2(path[k][1] - path[k - 1][1], path[k][0] - path[k - 1][0])
+        h2 = math.atan2(path[k + 1][1] - path[k][1], path[k + 1][0] - path[k][0])
+        d = abs(math.atan2(math.sin(h2 - h1), math.cos(h2 - h1)))
+        if d > turn_slow_rad:
+            out[k - 1] = out[k] = True
+    return out
+
+
 def shorten(
     pg: PlanningGrid, cells: list[tuple[int, int]], start_xy: tuple[float, float] | None = None
 ) -> list[tuple[float, float]]:
@@ -447,9 +496,11 @@ class ExplorationPlanner:
             gap = 0.0
             if np.isfinite(dn[k]):
                 ci, cj = f.cells[k]
-                i0, j0 = max(ci - 4, 0), max(cj - 4, 0)
-                sub = dist[i0 : ci + 5, j0 : cj + 5]
-                m = int(np.argmin(sub))
+                w = cfg.vp_window
+                i0, j0 = max(ci - w, 0), max(cj - w, 0)
+                sub = dist[i0 : ci + w + 1, j0 : cj + w + 1]
+                pen = pg.vp_pen[i0 : ci + w + 1, j0 : cj + w + 1]
+                m = int(np.argmin(sub + cfg.vp_clear_weight * pen))
                 vp = (int(m // sub.shape[1] + i0), int(m % sub.shape[1] + j0))
             else:
                 # not reachable (e.g. door narrowed by map noise): approach as close as possible
@@ -489,6 +540,7 @@ class ExplorationPlanner:
         pts, slow = shorten_ex(pg, cells, robot_xy, cfg.squeeze_pad_m)
         wps = [(x, y, cfg.altitude) for x, y in pts[1:]] or [(*best.viewpoint_xy, cfg.altitude)]
         slow = slow[1:] if len(pts) > 1 else [False]
+        slow = mark_careful(pg, robot_xy, [(x, y) for x, y, _ in wps], slow, cfg.turn_slow_rad)
         slow[-1] = True  # stop at the viewpoint slowly: PX4 overshoots a fast stop by ~0.15 m
         return PlanResult(
             "goal",

@@ -51,6 +51,11 @@ class SkillConfig:
     scan_every_m: float = 4.0  # 360 degree yaw scan at the start and after this much travel
     scan_step_rad: float = math.radians(60.0)
     scan_step_timeout_s: float = 3.0  # a yaw step that never completes (no yaw control) is skipped
+    # when nothing reachable is left but frontiers remain (blacklisted viewpoints, frontiers that
+    # a noisy first look could not resolve), clear the blacklists and sweep again: S3 tuning seeds
+    # 20-59 ended with 0.90 coverage and 4 frontiers left at 86 s of a 360 s budget
+    retry_passes: int = 2
+    retry_min_budget_s: float = 40.0
     planner: PlannerConfig = field(default_factory=PlannerConfig)
 
 
@@ -247,6 +252,8 @@ class ExploreSkill(_Base):
         self.scan_yaw0 = 0.0
         self.scan_xy: XY = (0.0, 0.0)
         self.scan_t = 0.0
+        self.retries = 0
+        self.looked_vp: list[XY] = []  # viewpoints already looked at from where the robot stood
 
     def _scan(self, ctx: Ctx, out: Out) -> bool:
         """Spin in place in `scan_step_rad` steps with camera yaw feedback. True when done."""
@@ -364,6 +371,20 @@ class ExploreSkill(_Base):
                 return out
             if self.state in ("plan", "replan"):
                 plan = self._run(ctx)
+                if (
+                    plan.status == "done"
+                    and plan.reason == "no reachable frontier"
+                    and self.retries < self.cfg.retry_passes
+                    and self.budget - el > self.cfg.retry_min_budget_s
+                ):
+                    self.retries += 1
+                    self.ev(ctx, "retry", n=self.retries, n_fronts=len(plan.frontiers))
+                    self.planner.failed.clear()
+                    self.planner.failed_vp.clear()
+                    self.planner.goal_centroid = None
+                    self.last_scan_odo = -1e9  # look around first: the map may have changed
+                    self.state = "plan"
+                    continue
                 if plan.status == "done":
                     self.ev(
                         ctx,
@@ -389,7 +410,18 @@ class ExploreSkill(_Base):
                         break
                 if math.dist(plan.goal.viewpoint_xy, robot) < 0.35:
                     self.ev(ctx, "vp_here", vp=list(plan.goal.viewpoint_xy))
-                    self.planner.mark_viewpoint_failed(plan.goal.viewpoint_xy)
+                    vp = plan.goal.viewpoint_xy
+                    if all(math.dist(vp, v) > 0.5 for v in self.looked_vp):
+                        # the frontier is still there although the robot stands at its viewpoint:
+                        # it was flying past, camera not facing it. Face it first, then judge
+                        # (before, the viewpoint was blacklisted unseen: tuning seeds 41, 45)
+                        self.looked_vp.append(vp)
+                        self.goal = plan.goal
+                        self.state, self.t_look = "look", ctx.now
+                        cx, cy = plan.goal.centroid
+                        out.goal = (robot[0], robot[1], math.atan2(cy - robot[1], cx - robot[0]))
+                        break
+                    self.planner.mark_viewpoint_failed(vp)
                     self.state = "plan"
                     continue
                 self._adopt(plan, ctx, out)
