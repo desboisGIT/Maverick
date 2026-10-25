@@ -40,9 +40,12 @@ FURNITURE = (
     "plant",
     "rug",
 )
-CLASS_IDS = {name: i for i, name in enumerate(STRUCTURAL + FURNITURE, start=1)}
+SMALL = ("banana", "bread", "person")  # S4b, appended: small objects and people
+SMALL_MIN_PIXELS = 6  # a banana is a few pixels at 2 m: the furniture minimum would drop it
+CLASS_IDS = {name: i for i, name in enumerate(STRUCTURAL + FURNITURE + SMALL, start=1)}
 ID_TO_NAME = {i: n for n, i in CLASS_IDS.items()}
-FURNITURE_IDS = frozenset(CLASS_IDS[n] for n in FURNITURE)
+FURNITURE_IDS = frozenset(CLASS_IDS[n] for n in FURNITURE + SMALL)
+SMALL_IDS = frozenset(CLASS_IDS[n] for n in ("banana", "bread"))
 
 
 def depth_edges(depth: np.ndarray, jump: float = 0.25, rel: float = 0.08) -> np.ndarray:
@@ -87,7 +90,9 @@ class SemanticDetector:
             lab = _regrow(lab, m & edges)
             for k in range(1, n + 1):
                 mk = lab == k
-                if int(mk.sum()) >= min_pixels:
+                if int(mk.sum()) >= (
+                    min(min_pixels, SMALL_MIN_PIXELS) if int(cid) in SMALL_IDS else min_pixels
+                ):
                     out.append((ID_TO_NAME[int(cid)], mk))
         return out
 
@@ -123,7 +128,8 @@ class SemanticDetector:
             s = np.sqrt(h * w / 4800.0)
             bw, bh = self.rng.uniform(6, 24) * s, self.rng.uniform(6, 24) * s
             u0, v0 = self.rng.uniform(0, max(w - bw, 1)), self.rng.uniform(0, max(h - bh, 1))
-            lab = FURNITURE[int(self.rng.integers(len(FURNITURE)))]
+            pool = FURNITURE + SMALL
+            lab = pool[int(self.rng.integers(len(pool)))]
             dets.append(
                 Detection(lab, float(self.rng.uniform(0.3, 0.6)), (u0, v0, u0 + bw, v0 + bh), None)
             )
