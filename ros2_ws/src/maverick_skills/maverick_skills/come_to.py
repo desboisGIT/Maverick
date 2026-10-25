@@ -26,7 +26,7 @@ def standoff_points(
     free,
     standoff: float,
     min_dist: float = 1.0,
-    max_extra: float = 1.0,
+    max_extra: float = 0.1,
     step_deg: float = 10.0,
 ) -> list[XY]:
     """Candidate stopping points around a person, best first: free, at least `standoff` away
@@ -40,12 +40,12 @@ def standoff_points(
     )
     out: list[XY] = []
     radius = max(standoff, min_dist)
-    while radius <= standoff + max_extra + 1e-9:
+    while radius <= max(standoff, min_dist) + max_extra + 1e-9:
         for a in angles:
             p = (person[0] + radius * math.cos(a), person[1] + radius * math.sin(a))
             if math.dist(p, person) >= min_dist and free(p):
                 out.append(p)
-        radius += 0.25
+        radius += 0.05
     return out
 
 

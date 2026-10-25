@@ -237,7 +237,9 @@ def test_come_to_never_plans_a_point_closer_than_one_metre():
     pts = standoff_points((5.0, 5.0), (1.0, 1.0), lambda p: True, 0.5, min_dist=1.0)
     assert pts and all(math.dist(p, (5.0, 5.0)) >= 1.0 - 1e-9 for p in pts)
     near = standoff_points((5.0, 5.0), (1.0, 1.0), lambda p: True, 1.5, 1.0)
-    assert math.dist(near[0], (1.0, 1.0)) < math.dist(near[-1], (1.0, 1.0))  # robot side first
+    assert (
+        math.dist(near[0], (1.0, 1.0)) <= min(math.dist(p, (1.0, 1.0)) for p in near) + 0.2
+    )  # robot side first
 
 
 def test_come_to_fails_when_the_person_is_unknown():
