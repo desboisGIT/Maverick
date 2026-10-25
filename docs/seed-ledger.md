@@ -18,4 +18,12 @@ Rules:
 
 | Seeds | First used | For |
 |---|---|---|
-| 1000100–1000109 | 2026-11-11 | S3 explore and goto_room (small drone, mocap): goto 8/10, explore 4/10. Reporting only, do not inspect |
+| 1000100–1000109 | 2026-11-11 | S3 explore and goto_room (small drone, mocap): goto 8/10, explore 4/10. Re-run 2026-11-12 with the explore changes: explore 6/10. Reporting only, never inspected |
+| 1000200–1000219 | 2026-11-12 | S3 explore 9/20 and goto_room 14/20 (small drone, mocap, final code of docs/s3-plan.md "Explore robustness"). Reporting only, never inspected |
+
+## Tuning seeds in use
+
+| Seeds | Used | For |
+|---|---|---|
+| 10–19 | 2026-11-11 | S3 goto and explore development |
+| 20–59 | 2026-11-12 | S3 explore failure statistics and tuning (40 apartments), goto_room check on 20–29 |

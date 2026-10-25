@@ -171,3 +171,48 @@ Seeds 1000000–1000004 were inspected during development and are retired (`docs
 | explore (C1, C6) | **4/10** | coverage 0.79 and 0.83 (1000101, 1000103); collisions 1 and 5 (1000101, 1000102); C6 recall 0.857 (1000104, 1000108); estimate error 0.37 m (1000100) |
 
 Explore passed 7/10 on the retired development seeds and 4/10 here, so part of the earlier tuning did not generalise [F]. These seeds are now the reporting set: do not inspect their runs; reproduce failure modes on tuning seeds.
+
+## Explore robustness on 40 tuning apartments (2026-11-12)
+
+Small drone, mocap (not exit results), budget 360 s, 2 parallel stacks (mean RTF 0.98-0.99). Tuning set: seeds 20-59, never held-out; held-out seeds were not inspected (ledger). One run per seed, so each row is a noisy sample: individual seeds flip between pass and fail with identical code [F] (9 seeds fail -> pass and 3 pass -> fail between baseline and the final code).
+
+**Failure modes of the code before the changes** (baseline: 24/40 pass) [F]
+- 10 runs with collisions (22 collisions in total). Contexts from the ground-truth track and the skill log: stationary or slow (<0.3 m/s) next to a frame or box seen only partly (a viewpoint 0.15-0.2 m from furniture whose face was still unknown, 4 runs; clearance exactly 0.15 m = body radius, i.e. a graze); overshoot of the last waypoint into a door frame (seed 25); a reversal at 0.6 m/s inside a door after a replan (seed 37); first-door crossings at 0.1-0.3 m/s (seeds 51, 52, 45). A crash makes the map useless: the remaining 6 coverage failures (0.57-0.86) were 5 crashes in the first 50 s followed by "explored everything reachable", and one clean early stop (seed 40, 0.896).
+- 7 runs with C6 recall < 0.95 (0.76-0.93). Missed regions are almost all in the first 30-s snapshot or persist as pockets: 7 of 9 missed regions had a frontier of 1-2 cells nearby (below the 3-cell cluster minimum), the others were unknown pockets sealed by fat walls (map walls 0.3-0.4 m thick at doors, no free cell touches them) [F]. Not fixed.
+- Early stop with frontiers left: on 4 of the 6 coverage failures explore ended with 2-8 frontiers whose viewpoints were blacklisted. `vp_here` (the plan's viewpoint is where the robot already is, because it flew past with the camera pointing elsewhere) blacklisted the viewpoint without ever facing the frontier (seeds 41, 45).
+- 0 estimate-error failures in the baseline (max 0.28 m, gate 0.3).
+
+**Changes** (pure modules, unit tests in `test_careful.py`, `test_skills.py`)
+1. Careful flight (`planner.mark_careful`): waypoints that pass within 0.25 m beyond the hard inflation of an obstacle or unobserved cell, and both segments around a turn sharper than 52 degrees, are flown at 0.4 m/s.
+2. Viewpoint clearance: among the reachable cells within 0.5 m of a frontier cell the viewpoint minimises cost + 1.0 x (number of the levels 0.3 / 0.4 / 0.5 m from obstacle or unobserved cell it falls within).
+3. `vp_here` now turns to face the frontier and judges it after a look (once per viewpoint) instead of blacklisting it unseen.
+4. When nothing reachable is left but frontiers remain and more than 40 s of budget are left, explore clears its blacklists, scans and sweeps again, up to 2 times (`retry_passes`).
+
+**Results on the 40 tuning seeds** (the first three rows used the same seeds the code was tuned on; v1 is an intermediate state with a wider viewpoint window 0.7 m, weight 2.0, 4 levels and without change 3)
+
+| Code | Pass | Collision runs (collisions) | Coverage < 0.9 | C6 < 0.95 | Estimate gate | Median explore wall |
+|---|---|---|---|---|---|---|
+| baseline | 24/40 | 10 (22) | 6 | 7 | 0 | 114 s |
+| v1 (1, 2 wide, 4) | 19/40 | 11 | 10 | 6 | 4 (spikes 0.31-1.26 m, one with a collision) | n/a |
+| final (1, 2, 3, 4) | **30/40** | 7 (11) | 1 | 5 | 2 (0.35 m with 3 collisions, 0.40 m without) | 160 s |
+
+v1 was worse than the baseline: the wider viewpoint window put viewpoints further from the frontier and `vp_here` still blacklisted unseen ones (coverage failures 0.65 / 0.77 without collisions) [F]. goto_room on tuning seeds 20-29 with the final code: 7/10 (old rule 6/10; failures: ended 0.55 m inside against 0.87, outside the kitchen, stuck on the way) [F].
+
+## Fresh held-out results after the explore changes (2026-11-12)
+
+Seeds 1000200-1000219 (20 apartments, never used: no earlier `results.jsonl` contained them) and a re-run of 1000100-1000109, final code, small drone, mocap, 2 stacks, mean RTF 0.99 (min per run 0.97-0.98). Numbers only; no run of these seeds was inspected.
+
+| Set | Scenario | Pass | Notes |
+|---|---|---|---|
+| 1000200-1000219 | explore | **9/20** | collisions in 5 runs (1 collision each, one with 2), coverage < 0.9 in 3 (0.62, 0.79, 0.84), C6 in 5 (recall 0.50-0.92), estimate gate in 2 (max 1.42 and 0.89 m, the second with collisions) |
+| 1000200-1000219 | goto_room (current rule) | **14/20** (old rule 7/20) | 6 failures: ended inside but short of the required clearance (0.66/0.75, 0.90/0.93, 0.04/0.6, 0.37/0.6, 0.30/0.6 m), 1 stuck |
+| 1000100-1000109 re-run | explore | **6/10** (before: 4/10) | collisions 2, C6 3, coverage 0.33 (one run: 1 collision early, 0.33 coverage), estimate max 0.30 m 1 |
+
+Explore therefore generalises worse than the tuning set (30/40 = 75%) shows: 15/30 on held-out apartments with the final code (50%, 95% interval roughly 33-67%) against 24/40 (60%) -> 30/40 on tuning [F]. The development result was optimistic again; the seeds used for tuning overfit to some extent even with 40 of them, and between runs the same seed flips [E].
+
+**Open issues**
+- [F] Collisions remain the main loss (held-out: 7 of 30 runs; many at clearance 0.15 = a graze at a stationary look or scan beside a box). After a crash the early stop ends the run with coverage 0.3-0.8. A reactive guard (step away from the map's nearest obstacle when it is within 0.22 m, and no 360 degree scan within 0.4 m of an obstacle) is not built [H].
+- [F] C6 misses are sealed pockets behind fat walls and 1-2 cell frontiers below the cluster minimum; the clean fix is thinner walls in the map (depth noise model, occupancy threshold), not a smaller cluster size, which would make the planner chase noise [H].
+- [F] Estimate-error spikes (0.3-1.4 m on a single sample, with and without collisions; 4 of 40 tuning runs and 3 of 30 held-out runs in the final code): not correlated with the sim's real-time-factor dips (median minimum RTF 0.13 with and without a spike); cause not found. A spike during a collision is a crash, otherwise possibly a vision-fusion reset in PX4 or a mismatched sample time in the referee [NV].
+- [E] After the changes the median explore takes 160 s instead of 114 s (slow flight near walls, retry sweeps); budget runs out in about 1 of 30 runs ("time budget used up").
+- [NV] Not tried: re-running the same seeds several times to measure run-to-run noise, flow-only localisation after these changes, the S1 failsafe suite.
