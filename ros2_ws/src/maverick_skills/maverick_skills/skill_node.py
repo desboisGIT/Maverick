@@ -11,6 +11,13 @@ Topics
   in  /maverick/camera/pose     geometry_msgs/PoseStamped  (drone position = camera position)
   in  /maverick/flight/status   std_msgs/String JSON   (skills start once phase == "hover")
   in  /maverick/memory/answer   std_msgs/String JSON   (goal_for_type replies)
+  in  /maverick/memory/detections|rooms|objects  (search frames; known rooms and people)
+  out /maverick/flight/mission  std_msgs/String        "land" (return with land)
+
+Every request goes through the executive (executive.py) first: invalid, unsafe or concurrent
+requests are rejected with a failed progress message ("rejected": true, "code", "message"). All
+progress messages of an accepted request carry its "request_id" (the request's "id", else
+"ex-<n>"); a skill's structured outcome is under "result".
   out /maverick/flight/goal     std_msgs/String JSON   goto goals, PX4 NED (skills.goal_message)
   out /maverick/memory/query    std_msgs/String JSON
   out /maverick/skill/progress  std_msgs/String JSON   gateway `skill_progress` data, latched
@@ -37,6 +44,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from std_msgs.msg import String
 
+from .executive import Executive, WorldView
 from .skills import Ctx, Out, SkillConfig, goal_message, make_skill
 
 LATCHED = QoSProfile(
@@ -71,12 +79,22 @@ class SkillNode(Node):
         self.grid_time = -1e9
         self.phase = ""
         self.t0 = time.monotonic()
+        self.executive = Executive()
+        self.frames: list[dict] = []  # detection payloads since the last tick (active skill only)
+        self.room_types: frozenset[str] = frozenset()
+        self.people: list[tuple[float, float]] = []
+        self.home_xy: tuple[float, float] | None = None
+        self.active_rid: str | None = None
 
         self.create_subscription(String, T.SKILL_REQUEST, self._on_request, RELIABLE)
         self.create_subscription(OccupancyGrid, T.MAP_GRID, self._on_grid, LATCHED)
         self.create_subscription(PoseStamped, T.CAM_POSE, self._on_pose, qos_profile_sensor_data)
         self.create_subscription(String, T.FLIGHT_STATUS, self._on_status, 10)
         self.create_subscription(String, T.MEM_ANSWER, self._on_answer, RELIABLE)
+        self.create_subscription(String, T.MEM_DETECTIONS, self._on_detections, RELIABLE)
+        self.create_subscription(String, T.MEM_ROOMS, self._on_rooms, LATCHED)
+        self.create_subscription(String, T.MEM_OBJECTS, self._on_objects, LATCHED)
+        self.mission_pub = self.create_publisher(String, T.FLIGHT_MISSION, 10)
         self.goal_pub = self.create_publisher(String, T.FLIGHT_GOAL, 10)
         self.query_pub = self.create_publisher(String, T.MEM_QUERY, RELIABLE)
         self.progress_pub = self.create_publisher(String, T.SKILL_PROGRESS, LATCHED)
@@ -120,7 +138,40 @@ class SkillNode(Node):
         try:
             self.phase = str(json.loads(msg.data).get("phase", ""))
         except ValueError:
+            return
+        if self.phase == "hover" and self.home_xy is None and self.robot_xy is not None:
+            self.home_xy = self.robot_xy  # first hover = above the take-off point
+
+    def _on_detections(self, msg: String) -> None:
+        if self.skill is None or self.skill.finished:
+            return
+        try:
+            self.frames.append(json.loads(msg.data))
+        except ValueError:
+            return
+        del self.frames[:-200]
+
+    def _on_rooms(self, msg: String) -> None:
+        try:
+            rooms = json.loads(msg.data)
+            types = {r.get("type") for r in rooms} | {r.get("secondary") for r in rooms}
+            self.room_types = frozenset(t for t in types if t)
+        except (ValueError, AttributeError):
             pass
+
+    def _on_objects(self, msg: String) -> None:
+        try:
+            objs = json.loads(msg.data)
+            self.people = [
+                (float(o["position"][0]), float(o["position"][1]))
+                for o in objs
+                if o.get("label") == "person" and float(o.get("confidence", 0)) >= 0.5
+            ]
+        except (ValueError, KeyError, TypeError):
+            pass
+
+    def _view(self) -> WorldView:
+        return WorldView(self.room_types, list(self.people), self.robot_xy, self.home_xy)
 
     def _on_answer(self, msg: String) -> None:
         if self.skill is not None:
@@ -132,28 +183,44 @@ class SkillNode(Node):
     def _on_request(self, msg: String) -> None:
         try:
             req = json.loads(msg.data)
+        except ValueError:
+            req = None
+        self._sync_executive()
+        dec = self.executive.submit(req, self._view())
+        if not dec.accepted:
+            self.get_logger().warn(f"rejected {msg.data[:120]!r}: {dec.code}: {dec.reason}")
+            self._publish_progress(dec.progress())
+            return
+        req = dec.request
+        if req["skill"] == "return":
+            req = {**req, "home_xy": list(self.home_xy)}
+        try:
             ctx = self._ctx()
             old = self.skill
             new = make_skill(req, self.cfg, ctx.now)
         except (ValueError, TypeError, AttributeError) as exc:
             self.get_logger().warn(f"bad skill request {msg.data[:120]!r}: {exc}")
             self._publish_progress(
-                {
-                    "skill": "explore",
-                    "state": "failed",
-                    "progress": -1,
-                    "message": f"bad request: {exc}",
-                }
+                dec.progress() | {"message": f"bad request: {exc}", "code": "malformed"}
             )
             return
         if old is not None and not old.finished:
             self._emit(old.cancel(ctx), ctx)
             self._drain_events(old)
+            self.executive.finished()
+        self.frames.clear()
         self.skill = new
         if new is None:
             self.get_logger().info("skill cancelled")
         else:
-            self.get_logger().info(f"skill {req}")
+            self.active_rid = dec.request_id
+            self.executive.started(dec)
+            self.get_logger().info(f"skill {req} ({dec.request_id})")
+
+    def _sync_executive(self) -> None:
+        """The executive is busy only while a skill really runs."""
+        if self.skill is None or self.skill.finished:
+            self.executive.finished()
 
     # -- loop --------------------------------------------------------------------------------
     def _tick(self) -> None:
@@ -168,8 +235,18 @@ class SkillNode(Node):
                 )
             )
             return
-        self._emit(s.step(ctx), ctx)
+        ctx.frames, self.frames = self.frames, []
+        ctx.people = list(self.people)
+        out = s.step(ctx)
+        if out.goal is not None and s.skill in ("goto", "search", "come_to", "return"):
+            why = self.executive.goal_violation(out.goal[:2], self._view())
+            if why is not None:  # never fly closer than 1 m to a person
+                self.get_logger().warn(f"{s.skill}: refused goal: {why}")
+                out = s.finish("failed", f"refused: {why}", ctx)
+        self._emit(out, ctx)
         self._drain_events(s)
+        if s.finished:
+            self.executive.finished()
 
     def _drain_events(self, s) -> None:
         if not s.events:
@@ -196,12 +273,16 @@ class SkillNode(Node):
             )
         if out.query is not None:
             self.query_pub.publish(String(data=json.dumps(out.query)))
+        if out.mission is not None:
+            self.mission_pub.publish(String(data=out.mission))
         if out.path is not None:
             self.path_pub.publish(String(data=json.dumps(out.path)))
         if out.progress is not None:
             self._publish_progress(out.progress)
 
     def _publish_progress(self, d: dict) -> None:
+        if self.active_rid and "request_id" not in d:
+            d = {**d, "request_id": self.active_rid}
         self.progress_pub.publish(String(data=json.dumps(d)))
 
 
