@@ -179,7 +179,12 @@ def test_every_model_has_a_label_matching_the_class_table():
     for seed in range(15):
         world = generate(seed)
         assert world.manifest["classes"] == CLASSES
-        by_id = {f["id"]: f["class"] for f in world.manifest["furniture"]}
+        by_id = {
+            f["id"]: f["class"]
+            for f in world.manifest["furniture"]
+            + world.manifest["small_objects"]
+            + world.manifest["people"]
+        }
         structural = {
             "ground_plane": "floor",
             "floor": "floor",
@@ -196,3 +201,43 @@ def test_every_model_has_a_label_matching_the_class_table():
             assert plugins[0].get("name") == "gz::sim::systems::Label"
             expected = structural.get(m.get("name")) or by_id[m.get("name")]
             assert int(plugins[0].findtext("label")) == CLASSES[expected]
+
+
+def test_new_classes_are_appended_without_renumbering():
+    from worldgen.classes import CLASSES, FURNITURE, SMALL, STRUCTURAL
+
+    n = len(STRUCTURAL) + len(FURNITURE)
+    assert [CLASSES[c] for c in SMALL] == [n + 1, n + 2, n + 3]
+    assert CLASSES["floor"] == 1 and CLASSES["rug"] == n
+
+
+def test_extras_do_not_change_the_layout_and_are_deterministic():
+    plain = generate(5, small_objects=False, people=False)
+    full = generate(5)
+    for key in ("rooms", "doors", "furniture", "spawn", "footprint"):
+        assert plain.manifest[key] == full.manifest[key]
+    assert plain.manifest["small_objects"] == [] and plain.manifest["people"] == []
+    assert full.sdf == generate(5).sdf and full.manifest_json() == generate(5).manifest_json()
+
+
+def test_small_objects_and_people_statistics():
+    present = {"banana": 0, "bread": 0}
+    people = 0
+    n = 100
+    for seed in range(n):
+        world = generate(seed)
+        m = world.manifest
+        assert not validate(m, world.sdf), seed
+        for cls, there in m["presence"].items():
+            present[cls] += there
+            assert there == any(o["class"] == cls for o in m["small_objects"])
+        for o in m["small_objects"]:
+            room = next(r for r in m["rooms"] if r["id"] == o["room"])
+            assert room["type"] == "kitchen" and o["position"][2] > 0.4
+        for p in m["people"]:
+            room = next(r for r in m["rooms"] if r["id"] == p["room"])
+            assert room["type"] != "kitchen"
+        people += len(m["people"])
+    for cls, k in present.items():
+        assert 0.5 * n <= k <= 0.9 * n, (cls, k)  # about 70 % present
+    assert people >= 0.8 * n

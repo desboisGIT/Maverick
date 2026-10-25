@@ -140,6 +140,29 @@ def validate(m: dict[str, Any], sdf: str | None = None) -> list[str]:
         ):
             errs.append(f"{room.id} doors not connected by a {prof.corridor} m corridor")
 
+    # extras: small objects on kitchen surfaces, people clear of furniture
+    surf = {
+        f["id"]: [Rect.from_points(s["polygon"]) for s in f["surfaces"]]
+        for f in items
+        if f["surfaces"]
+    }
+    for o in m.get("small_objects", []):
+        x, y, z = o["position"]
+        if by_id[o["room"]].type != "kitchen":
+            errs.append(f"{o['id']} is not in the kitchen")
+        if not any(r.contains_point((x, y)) for r in surf.get(o["on"], [])):
+            errs.append(f"{o['id']} is not on a surface of {o['on']}")
+    for p in m.get("people", []):
+        (px0, py0, _), (px1, py1, _) = p["bbox"]
+        pr = Rect(px0, py0, px1, py1)
+        proom = by_id[p["room"]]
+        if proom.type == "kitchen":
+            errs.append(f"{p['id']} stands in the kitchen")
+        if not proom.rect.inset(WALL_HALF).contains(pr, 1e-3):
+            errs.append(f"{p['id']} intersects a wall")
+        if any(pr.intersects(rects[f["id"]]) for f in solid):
+            errs.append(f"{p['id']} overlaps furniture")
+
     # spawn
     sx, sy, sz, _ = spawn["pose"]
     sroom = by_id[spawn["room"]]
@@ -184,9 +207,12 @@ def validate_sdf(sdf: str, m: dict[str, Any]) -> list[str]:
         errs.append("world name does not match the manifest")
     if world is not None:
         names = [mod.get("name") for mod in world.findall("model")]
-        furniture = [n for n in names if n not in STRUCTURE_MODELS]
+        extra_ids = [e["id"] for e in m.get("small_objects", []) + m.get("people", [])]
+        furniture = [n for n in names if n not in STRUCTURE_MODELS and n not in extra_ids]
         if furniture != [f["id"] for f in m["furniture"]]:
             errs.append("SDF furniture models differ from the manifest")
+        if any(i not in names for i in extra_ids):
+            errs.append("SDF lacks a small object or person of the manifest")
         if len(set(names)) != len(names):
             errs.append("duplicate model names in SDF")
     return errs

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from .classes import CLASSES
 from .decor import Lamp, Panel
+from .extras import PERSON_HEIGHT, Person, SmallObject
 from .floorplan import FloorPlan
 from .floors import RoomFloor
 from .furniture import Placed
@@ -227,6 +228,50 @@ def _furniture_model(p: Placed) -> str:
     return model(p.id, body, p.cls, pose=f"{n(p.x)} {n(p.y)} 0 0 0 {n(p.yaw)}")
 
 
+BANANA_YELLOW: RGB = (0.95, 0.80, 0.12)
+BREAD_BROWN: RGB = (0.62, 0.38, 0.16)
+BREAD_CRUST: RGB = (0.45, 0.25, 0.10)
+SHIRT: RGB = (0.80, 0.12, 0.12)  # the person's distinct appearance (class "person")
+TROUSERS: RGB = (0.12, 0.16, 0.42)
+SKIN: RGB = (0.87, 0.68, 0.55)
+
+
+def _small_model(o: SmallObject) -> str:
+    """Bunch of three bananas / a loaf, resting on a surface; no collision (the drone cannot
+    reach a counter top, and a static visual keeps the physics world unchanged)."""
+    if o.cls == "banana":
+        body = [
+            visual(f"b{k}", (0.0, dy, 0.02 + 0.012 * (k == 1)), "box", (0.22, 0.045, 0.04),
+                   BANANA_YELLOW)
+            for k, dy in enumerate((-0.05, 0.0, 0.05))
+        ]  # fmt: skip
+        stem = visual("stem", (-0.12, 0.0, 0.035), "box", (0.03, 0.05, 0.03), (0.3, 0.25, 0.1))
+        body.append(stem)
+    else:
+        body = [
+            visual("loaf", (0.0, 0.0, 0.04), "box", (0.30, 0.13, 0.08), BREAD_BROWN),
+            visual("crust", (0.0, 0.0, 0.088), "box", (0.28, 0.11, 0.03), BREAD_CRUST),
+        ]
+    return model(o.id, body, o.cls, pose=f"{n(o.x)} {n(o.y)} {n(o.z)} 0 0 {n(o.yaw)}")
+
+
+def _person_model(p: Person) -> str:
+    """Static mannequin: legs, torso, arms, head. Collides (the drone must not fly into it)."""
+    parts = [
+        ("legL", (0, -0.1, 0.43), "box", (0.14, 0.14, 0.86), TROUSERS),
+        ("legR", (0, 0.1, 0.43), "box", (0.14, 0.14, 0.86), TROUSERS),
+        ("torso", (0, 0, 1.2), "box", (0.24, 0.40, 0.6), SHIRT),
+        ("armL", (0, -0.26, 1.18), "box", (0.10, 0.10, 0.58), SHIRT),
+        ("armR", (0, 0.26, 1.18), "box", (0.10, 0.10, 0.58), SHIRT),
+        ("head", (0, 0, PERSON_HEIGHT - 0.12), "sphere", (0.12,), SKIN),
+    ]
+    body = []
+    for name, pos, shape, size, color in parts:
+        body.append(visual(name, pos, shape, size, color))
+        body.append(collision(f"c_{name}", pos, shape, size))
+    return model(p.id, body, "person", pose=f"{n(p.x)} {n(p.y)} 0 0 0 {n(p.yaw)}")
+
+
 def _lights(lamps: list[Lamp], height: float, light: Lighting) -> list[str]:
     out = []
     for i, lamp in enumerate(lamps):
@@ -318,6 +363,8 @@ def write_sdf(
     ceiling_height: float,
     lighting: str,
     ceiling: bool,
+    small: list[SmallObject] | None = None,
+    people: list[Person] | None = None,
 ) -> str:
     light = LIGHTING[lighting]
     ground = GROUND_PLANE.replace("@LABEL@", label_plugin("floor"))
@@ -334,5 +381,7 @@ def write_sdf(
         parts.append(_ceiling_model(plan, ceiling_height, palette.ceiling, lamps, light.lamp_color))
     parts += _panel_models(panels, palette.trim, light.window)
     parts += [_furniture_model(p) for p in furniture]
+    parts += [_small_model(o) for o in small or []]
+    parts += [_person_model(p) for p in people or []]
     parts.append(FOOTER)
     return "\n".join(parts)

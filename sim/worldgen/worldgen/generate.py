@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .decor import make_lamps, make_panels
+from .extras import extras_manifest, place_person, place_small_objects
 from .floorplan import make_floorplan
 from .floors import make_floors
 from .furniture import furnish
@@ -49,6 +50,8 @@ def generate(
     low_texture: bool = False,
     lighting: str | None = None,
     drone: str = DEFAULT_PROFILE,
+    small_objects: bool = True,
+    people: bool = True,
 ) -> World:
     if drone not in PROFILES:
         raise ValueError(f"unknown drone profile {drone!r}")
@@ -89,6 +92,11 @@ def generate(
         or sub_rng(seed, "lighting").choices(("day", "evening", "lamp_only"), (0.4, 0.35, 0.25))[0]
     )
 
+    ex_rng = sub_rng(seed, "extras")  # own stream: the layout above is the same with or without
+    small = place_small_objects(ex_rng, plan, furniture) if small_objects else []
+    person = place_person(ex_rng, plan, openings, furniture, spawn, prof) if people else None
+    persons = [person] if person else []
+
     name = world_name(seed)
     sdf = write_sdf(
         name,
@@ -104,6 +112,8 @@ def generate(
         ceiling_height,
         preset,
         ceiling,
+        small,
+        persons,
     )
     manifest = build_manifest(
         seed,
@@ -118,5 +128,6 @@ def generate(
         palette.name,
         prof.name,
         {"ceiling": ceiling, "low_texture": low_texture},
+        extras_manifest(small, persons),
     )
     return World(name, sdf, manifest)
