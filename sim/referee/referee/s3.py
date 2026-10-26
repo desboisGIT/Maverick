@@ -40,6 +40,7 @@ from referee.s3_frames import model_pose_env
 from referee.s3_verdicts import (
     estimate_error,
     exit_result_warning,
+    explore_pass_c6_v1,
     goto_metrics,
     hover_metrics,
     label_reason,
@@ -368,6 +369,8 @@ def run_explore(stack: Stack, world: dict, out: Path, i: int, args, goto: bool) 
     metrics["vision"] = vision_counters(stack)
     v = verdict_explore(metrics)
     rec = {"verdict": "pass" if v.passed else "fail", "reason": v.reason, "metrics": metrics}
+    if "c6_recall_v1" in metrics:
+        rec["c6_old_rule_pass"] = explore_pass_c6_v1(metrics)
     if goto_m is not None:
         origin = (*world["manifest"]["spawn"]["pose"][:2], ground_z)
         gm = goto_metrics(

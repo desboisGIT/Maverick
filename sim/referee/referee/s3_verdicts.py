@@ -195,6 +195,12 @@ def verdict_explore(m: dict) -> Verdict:
     )
 
 
+def explore_pass_c6_v1(m: dict) -> bool:
+    """Explore verdict under the original C6 rule (count of regions, no size filter), reported
+    next to the current rule (area-weighted, drone-sized regions) as `c6_old_rule_pass`."""
+    return verdict_explore({**m, "c6_recall": m.get("c6_recall_v1", m["c6_recall"])}).passed
+
+
 def goto_metrics(manifest: dict, room_type: str, final_map_xy, origin) -> dict:
     """C2 geometry: where the drone ended against the GT room polygon (all in the map frame)."""
     room = next((r for r in manifest["rooms"] if r["type"] == room_type), None)
@@ -276,6 +282,11 @@ def summarise(rows: list[dict], scenario: str, localisation: str = "flow") -> di
         **(
             {"old_rule_pass": sum(bool(r.get("old_rule_pass")) for r in rows)}
             if any("old_rule_pass" in r for r in rows)
+            else {}
+        ),
+        **(
+            {"c6_old_rule_pass": sum(bool(r.get("c6_old_rule_pass")) for r in rows)}
+            if any("c6_old_rule_pass" in r for r in rows)
             else {}
         ),
         "seed_sets": sorted(sets),

@@ -163,3 +163,11 @@ def test_mocap_results_are_labelled_and_never_exit_results():
     assert summarise(rows, "explore", "mocap")["exit_result"] is False
     assert "mocap" in summarise(rows, "explore", "mocap")["label"]
     assert summarise(rows, "explore", "flow")["exit_result"] is True
+
+
+def test_c6_old_rule_verdict_is_reported_next_to_the_new_one():
+    from referee.s3_verdicts import explore_pass_c6_v1
+
+    m = {**GOOD, "c6_recall": 0.97, "c6_recall_v1": 0.857}
+    assert verdict_explore(m).passed
+    assert not explore_pass_c6_v1(m)

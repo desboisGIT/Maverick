@@ -45,9 +45,35 @@ class GroundTruth:
                     break
                 reach = nxt
         self.reach2d = reach
+        self._clear2d: np.ndarray | None = None
         idx = np.argwhere(self.reach3d)
         self.reach_centers = origin + (idx + 0.5) * res
         self.volume_m3 = len(idx) * res**3
+
+    def clearance_levels(self, max_levels: int = 8) -> np.ndarray:
+        """Per column of `reach2d`: how many erosions (4-neighbourhood, one cell each) it survives.
+
+        A column with level k has its nearest non-free column about k - 0.5 cells away; level 4 at
+        0.1 m resolution is about 0.35 m, the planner's hard radius for the small drone (0.15 m
+        body + 0.20 m margin), i.e. a column the drone's centre could actually be in.
+        """
+        if self._clear2d is None:
+            cl = np.zeros(self.reach2d.shape, int)
+            cur = self.reach2d.copy()
+            for _ in range(max_levels):
+                if not cur.any():
+                    break
+                cl += cur
+                nxt = cur.copy()
+                nxt[1:] &= cur[:-1]
+                nxt[:-1] &= cur[1:]
+                nxt[:, 1:] &= cur[:, :-1]
+                nxt[:, :-1] &= cur[:, 1:]
+                nxt[0] = nxt[-1] = False
+                nxt[:, 0] = nxt[:, -1] = False
+                cur = nxt
+            self._clear2d = cl
+        return self._clear2d
 
     def coverage(self, vmap: VoxelMap) -> float:
         """C1: fraction of reachable free voxels (flight band) observed by the map."""
@@ -80,6 +106,10 @@ class GroundTruth:
         A region is a 8-connected component (>= min_region_cells columns, 0.25 m^2 at 0.1 m) of
         columns that are reachable in ground truth but unknown in `grid`. It counts as detected
         if any detected frontier cell lies within `near` metres of one of its cells.
+
+        Besides the counts (`regions`, `detected`: the original C6 rule) the result lists every
+        region as `detail` rows (cells, clearance level of its roomiest column, detected), from
+        which `c6_area_recall` computes the area-weighted rule (docs/s3-plan.md, C6 rule change).
         """
         unknown_reach = np.zeros(grid.shape, bool)
         di = int(round((origin[0] - self.origin[0]) / self.res))
@@ -96,14 +126,43 @@ class GroundTruth:
         fcells = np.concatenate([f.cells for f in fronts]) if fronts else np.zeros((0, 2), int)
         r = int(round(near / res))
         regions = cluster_cells(unknown_reach, min_region_cells)
+        clear = np.zeros(grid.shape, int)
+        if n0 > 0 and n1 > 0:
+            clear[gi0 : gi0 + n0, gj0 : gj0 + n1] = self.clearance_levels()[
+                gi0 + di : gi0 + di + n0, gj0 + dj : gj0 + dj + n1
+            ]
         hit = 0
+        detail = []
         for reg in regions:
-            if len(fcells) == 0:
-                continue
-            lo, hi = reg.min(axis=0) - r, reg.max(axis=0) + r
-            cand = fcells[(fcells >= lo).all(axis=1) & (fcells <= hi).all(axis=1)]
-            if len(cand) == 0:
-                continue
-            d2 = ((reg[None, :, :] - cand[:, None, :]) ** 2).sum(axis=2).min()
-            hit += int(d2 <= r * r)
-        return {"regions": len(regions), "detected": hit}
+            found = False
+            if len(fcells):
+                lo, hi = reg.min(axis=0) - r, reg.max(axis=0) + r
+                cand = fcells[(fcells >= lo).all(axis=1) & (fcells <= hi).all(axis=1)]
+                if len(cand):
+                    d2 = ((reg[None, :, :] - cand[:, None, :]) ** 2).sum(axis=2).min()
+                    found = bool(d2 <= r * r)
+            hit += int(found)
+            detail.append((len(reg), int(clear[reg[:, 0], reg[:, 1]].max()), found))
+        return {"regions": len(regions), "detected": hit, "detail": detail}
+
+
+C6_MIN_CLEARANCE_LEVELS = 4  # a region the drone cannot fit into does not count (see above)
+
+
+def c6_area_recall(
+    snapshots: list[list[tuple[int, int, bool]]], min_levels: int = C6_MIN_CLEARANCE_LEVELS
+) -> float:
+    """C6 recall, area-weighted per snapshot, averaged over the snapshots.
+
+    Per snapshot: detected area / area of the unknown-but-reachable regions in which the drone's
+    body fits (clearance level >= `min_levels`); a snapshot without such regions is skipped (1.0
+    if all are). A persistent pocket is one miss per snapshot, but weighted by its area, not
+    counted as a whole region; a 0.3 m^2 sliver beside a wall no longer outweighs 5 m^2 found.
+    """
+    vals = []
+    for regs in snapshots:
+        flyable = [r for r in regs if r[1] >= min_levels]
+        total = sum(r[0] for r in flyable)
+        if total:
+            vals.append(sum(r[0] for r in flyable if r[2]) / total)
+    return sum(vals) / len(vals) if vals else 1.0

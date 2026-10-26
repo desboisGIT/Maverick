@@ -22,7 +22,7 @@ for _p in (ROOT / "ros2_ws/src/maverick_mapping", ROOT / "sim/worldgen", ROOT / 
 
 import numpy as np  # noqa: E402
 from maverick_mapping.map_io import load_map  # noqa: E402
-from maverick_mapping.metrics import GroundTruth  # noqa: E402
+from maverick_mapping.metrics import GroundTruth, c6_area_recall  # noqa: E402
 from maverick_mapping.synthetic import Scene  # noqa: E402
 
 from referee.s3_frames import Vec3, spawn_origin, world_to_map  # noqa: E402
@@ -103,6 +103,7 @@ def explore_metrics(raw: dict) -> dict:
     out["map_frames"] = final.frames
 
     regions = detected = 0
+    details = []
     cov_t = []
     for snap in raw.get("snapshots", []):
         vm = load_map(snap["path"])
@@ -110,9 +111,13 @@ def explore_metrics(raw: dict) -> dict:
         rec = gt.frontier_recall(grid, res, org)
         regions += rec["regions"]
         detected += rec["detected"]
+        details.append(rec["detail"])
         cov_t.append((round(snap["t"] - t0, 1), round(gt.coverage(vm), 3)))
     out["c6_regions"], out["c6_detected"] = regions, detected
-    out["c6_recall"] = round(detected / regions, 4) if regions else 1.0
+    # C6 rule of 2026-11-12: area-weighted, drone-sized regions (maverick_mapping.metrics); the
+    # original count rule stays next to it as c6_recall_v1 (docs/s3-plan.md, decisions)
+    out["c6_recall"] = round(c6_area_recall(details), 4)
+    out["c6_recall_v1"] = round(detected / regions, 4) if regions else 1.0
     out["coverage_over_time"] = cov_t
     out["n_snapshots"] = len(raw.get("snapshots", []))
     return out

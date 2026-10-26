@@ -105,3 +105,18 @@ def test_scene_from_worldgen_and_gt_volume():
     assert gt.volume_m3 > 50
     sx, sy, _ = sc.spawn
     assert sc.min_clearance(np.array([sx, sy, 1.2])) > 0.5
+
+
+def test_c6_area_recall_weights_by_area_and_ignores_regions_the_drone_cannot_fit_in():
+    from maverick_mapping.metrics import c6_area_recall
+
+    # one snapshot: 400 cells found, a 30-cell sliver missed -> 0.93 by area (the count rule: 0.5)
+    snap = [(400, 6, True), (30, 5, False)]
+    assert abs(c6_area_recall([snap]) - 400 / 430) < 1e-9
+    # the same sliver with clearance level 2 (narrower than the drone) is not scored at all
+    assert c6_area_recall([[(400, 6, True), (30, 2, False)]]) == 1.0
+    # a snapshot without any scored region does not count; no snapshot at all -> 1.0
+    assert c6_area_recall([[(30, 2, False)], [(100, 5, True)]]) == 1.0
+    assert c6_area_recall([]) == 1.0
+    # snapshots average with equal weight
+    assert abs(c6_area_recall([[(100, 5, True)], [(100, 5, False)]]) - 0.5) < 1e-9
