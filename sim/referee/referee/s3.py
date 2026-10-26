@@ -348,6 +348,12 @@ def run_explore(stack: Stack, world: dict, out: Path, i: int, args, goto: bool) 
         "t_explore_end": t_after if goto else t_end,
         "snapshots": [s for s in snaps if s["t"] <= t_end],
         "final_map": in_repo(final),
+        # diagnosis data (not used by the verdicts): PX4's estimate as the monitor saw it
+        "px4_pos": [
+            [r["t"], r["x"], r["y"], r["z"], int(bool(r.get("valid")))]
+            for r in px4.rows
+            if r.get("k") == "pos"
+        ],
     }
     raw_path = run_dir / "raw.json"
     raw_path.write_text(json.dumps(raw))
@@ -391,6 +397,20 @@ def save_logs(stack: Stack, run_dir: Path) -> None:
         print(f"could not save stack logs: {e}", file=sys.stderr)
 
 
+def save_diag(stack: Stack, run_dir: Path, rtf_rows: list[dict]) -> None:
+    """Estimator diagnosis data: wall-clock RTF series and a compact extract of PX4's ulog
+    (estimate vs simulator truth, EV innovations, resets), see scripts/ulog_extract.py."""
+    try:
+        if not run_dir.is_dir():
+            return
+        (run_dir / "rtf_series.json").write_text(json.dumps([[r["t"], r["rtf"]] for r in rtf_rows]))
+        r = stack.exec("sim", "python3 /maverick/scripts/ulog_extract.py", timeout=120)
+        if r.returncode == 0 and r.stdout.strip():
+            (run_dir / "ekf.json").write_text(r.stdout)
+    except Exception as e:  # noqa: BLE001 - diagnostics never fail a run
+        print(f"could not save diagnostics: {e}", file=sys.stderr)
+
+
 def run_one(stack: Stack, scenario: str, seed: int, out: Path, i: int, args) -> dict:
     world = make_world(seed)
     configure_stack(
@@ -411,7 +431,9 @@ def run_one(stack: Stack, scenario: str, seed: int, out: Path, i: int, args) -> 
         if rtf:
             print(f"  [stack {stack.index}] seed {seed} real-time factor {rtf}", flush=True)
         RTF_BY_RUN[(threading.get_ident(), i)] = rtf
-        save_logs(stack, out / f"run-{i:03d}-{world['name']}")
+        run_dir = out / f"run-{i:03d}-{world['name']}"
+        save_logs(stack, run_dir)
+        save_diag(stack, run_dir, rtf_stream.rows)
         stack.down()
 
 
