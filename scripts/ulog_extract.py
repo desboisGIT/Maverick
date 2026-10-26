@@ -61,6 +61,38 @@ def main() -> None:
         t = inn["timestamp"] / 1e6
         cols = thin(t, inn["ev_hpos[0]"], inn["ev_hpos[1]"], inn["flow[0]"], inn["flow[1]"])
         out["innov"] = dict(zip(["t", "ev0", "ev1", "flow0", "flow1"], cols, strict=True))
+    ts = topic(u, "timesync_status")
+    if ts is not None:
+        t = ts["timestamp"] / 1e6
+        base = float(ts["estimated_offset"][0])
+        names = ["t", "est_off_s", "obs_off_s", "rtt_ms"]
+        cols = thin(
+            t,
+            (ts["estimated_offset"] - base) / 1e6,
+            (ts["observed_offset"] - base) / 1e6,
+            ts["round_trip_time"] / 1e3,
+            hz=2.0,
+        )
+        out["timesync"] = dict(zip(names, cols, strict=True))
+    aid = topic(u, "estimator_aid_src_ev_pos")
+    if aid is not None:
+        t = aid["timestamp"] / 1e6
+        names = ["t", "fused", "rejected", "inn0", "inn1", "test_ratio"]
+        cols = thin(
+            t,
+            aid["fused"],
+            aid["innovation_rejected"],
+            aid["innovation[0]"],
+            aid["innovation[1]"],
+            aid["test_ratio[0]"],
+        )
+        out["ev_aid"] = dict(zip(names, cols, strict=True))
+    vo = topic(u, "vehicle_visual_odometry")
+    if vo is not None:
+        t = vo["timestamp"] / 1e6
+        lag = (vo["timestamp"].astype(np.int64) - vo["timestamp_sample"].astype(np.int64)) / 1e3
+        cols = thin(t, lag, hz=2.0)
+        out["vo_lag_ms"] = dict(zip(["t", "lag_ms"], cols, strict=True))
     ev = topic(u, "estimator_event_flags")
     if ev is not None:
         names = [k for k in ev if k.startswith(("reset_", "starting_"))]
