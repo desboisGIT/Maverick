@@ -25,6 +25,7 @@ The drone explores an unseen generated apartment on its own, builds a 3D map, fi
 - **Drone size.** The simulated drone is PX4's x500 (circumscribed radius 0.39 m), so worldgen's default `x500` profile uses 1.1–1.3 m doors and 1.2 m corridors; the `small` profile keeps real 0.8–1.0 m doors for a future small-drone model.
 - **Offline harness first.** Mapping and exploration are developed against a synthetic simulator: depth images ray-cast from worldgen manifests, a kinematic drone following the planner's waypoints, and pose noise. Hundreds of explorations run in seconds without Gazebo; Gazebo then confirms.
 - **C2 pass rule (owner-visible, 2026-11-11).** The C2 text says "ends ≤ 1 m inside the room". It was first read as wall distance ≥ min(1.0 m, inscribed radius − 0.05 m), which for a narrow room demands the single deepest point within 5 cm: two narrow kitchens ended 0.931 / 0.949 m against 0.95 m and failed, a test flaw rather than a navigation fault. New rule: the drone ends inside the correct ground-truth room AND its distance to the room's walls is ≥ min(1.0 m, 0.6 × inscribed radius) (inscribed radius = largest wall distance of any point of the GT polygon). Wide rooms (inscribed ≥ 1.67 m) still need 1.0 m; a 2.0 m wide kitchen needs 0.6 m. Nothing else in the scoring changed. To keep the change transparent every goto_room result row carries `old_rule_pass` (verdict of the old rule on the same run, `old_required_m` in the metrics) and `summary.json` counts `old_rule_pass`; reports show both.
+- **C6 pass rule (owner-visible, 2026-11-12).** The C6 text says "frontier recall >= 95% against ground-truth unknown-but-reachable regions". It was first scored as the number of detected regions over all regions of at least 0.25 m^2, summed over the snapshots (every 30 s and the final map). Run-to-run noise measurements (Noise section) showed this count is dominated by a few small things: a 0.5 m^2 strip beside a wall weighed as much as a 5 m^2 room (seed 25: 51 cells with 0.2 m clearance, recall 0.80), a pocket that stays unknown is counted once per snapshot (11 times in tuning seed 46), and runs have 3-17 regions in total. New rule: per snapshot, detected area over the area of the unknown-but-reachable regions the drone's body fits into (a region counts only if one of its columns has at least 4 erosion levels of ground-truth free space around it, about 0.35 m, the planner's hard radius for the small drone), averaged over the snapshots; pass at >= 0.95 as before. Everything else about C6 (the 0.3 m detection distance, the 3-cell cluster minimum, the 0.25 m^2 minimum region) is unchanged. Every explore result row carries `c6_recall` (new) and `c6_recall_v1` (the old count rule), `c6_old_rule_pass` is the verdict under the old rule, and `summary.json` counts it. On the 30 noise runs the old rule passes 18, the new one 23; on the 40 tuning runs of the earlier code 35 -> 37 of 40 (C6 only). A region that stays unknown and is genuinely missed still fails (tuning seed 21: an alcove behind a 2-cell opening, 0.33 under both rules).
 
 ## Components
 
@@ -216,3 +217,80 @@ Explore therefore generalises worse than the tuning set (30/40 = 75%) shows: 15/
 - [F] Estimate-error spikes (0.3-1.4 m on a single sample, with and without collisions; 4 of 40 tuning runs and 3 of 30 held-out runs in the final code): not correlated with the sim's real-time-factor dips (median minimum RTF 0.13 with and without a spike); cause not found. A spike during a collision is a crash, otherwise possibly a vision-fusion reset in PX4 or a mismatched sample time in the referee [NV].
 - [E] After the changes the median explore takes 160 s instead of 114 s (slow flight near walls, retry sweeps); budget runs out in about 1 of 30 runs ("time budget used up").
 - [NV] Not tried: re-running the same seeds several times to measure run-to-run noise, flow-only localisation after these changes, the S1 failsafe suite.
+
+## Run-to-run noise, estimate spikes, collision guard (2026-11-12)
+
+Small drone, mocap (not exit results), budget 360 s, 2 parallel stacks. Tuning seeds 20-79 (diagnosed freely); the final held-out set is below and was not inspected. Every number is one run of the stated code unless a row says otherwise.
+
+### 1. Run-to-run noise [F]
+
+Seeds 20-29 explored three times each with the code of the previous section (explore changes, no guard, no EV gate; mean RTF 0.99 / 0.95 / 0.97 per round). Verdicts as scored then (old C6 rule):
+
+| Seed | Pass | Run 1 / run 2 / run 3 |
+|---|---|---|
+| 20 | 3/3 | pass / pass / pass |
+| 21 | 2/3 | pass / C6 0.33 / pass |
+| 22 | 3/3 | pass / pass / pass |
+| 23 | 3/3 | pass / pass / pass |
+| 24 | 0/3 | C6 0.94 / C6 0.93 / 1 collision |
+| 25 | 1/3 | pass / C6 0.80 / C6 0.83 |
+| 26 | 0/3 | 1 collision / estimate max 0.30 m / 4 collisions |
+| 27 | 1/3 | 4 collisions + C6 0.86 / 1 collision / pass |
+| 28 | 2/3 | pass / pass / C6 0.75 |
+| 29 | 3/3 | pass / pass / pass |
+
+Round totals 7, 5, 6 of 10: **18/30 = 60%** (a round of 10 moves by +-2 on its own; 95% interval for 18/30 about 41-77%). Four seeds always pass, two never (24: a 267-cell unknown region without a frontier in the first snapshot; 26: collisions), four flip (21, 25, 27, 28). The 12 failing runs: 5 with collisions (11 collisions in total, one place per run), 7 on C6 (recall 0.33-0.94), 1 on the estimate gate (0.301 m against 0.3 m), 0 on coverage. So **a single-run table has about +-15 points of sampling noise**, which is why the earlier "30/40 on tuning, 15/30 held-out" comparison could not tell tuning gain from noise. Collisions and the estimate gate flip with the run; C6 flips mostly because a run has 3-17 scored regions (next point).
+
+C6 is a counting problem (Decisions, "C6 pass rule"). Seed 21 run 2: three snapshots, one 0.7 m^2 alcove behind a 2-cell opening that stayed unknown in two of them: 1 of 3 = 0.33 (a real miss: the frontier of an opening 0.2 m wide is below the 3-cell cluster minimum). Seed 25: a 0.5 m^2 strip beside a wall decided 2 of 3 runs. Re-scored with the new rule the same 30 runs pass **23/30** (rounds 8, 7, 8), seeds that flip 3 instead of 4. Old / new per seed (passes of 3): 24 0 -> 2, 25 1 -> 3, 27 1 -> 1, 28 2 -> 3, the others unchanged.
+
+### 2. Estimate spikes with mocap: cause found and fixed [F]
+
+Diagnosis data per run since this work: PX4's own ulog reduced by `scripts/ulog_extract.py` (estimate against the simulator's truth topic, EV innovations, resets, timesync offset), RTF series, the monitor's estimate stream (`ekf.json`, `rtf_series.json`, `raw.json: px4_pos` in each run directory).
+
+- [F] The referee's estimate error and the ulog's agree (max 0.17 / 0.17 m, 0.23 / 0.24 m ...): the spikes are in PX4's estimate, not a referee timestamp artefact.
+- [F] **In 14 of the 30 noise runs PX4 started fusing the external-vision position after take-off, 0.1-7.3 s later** (`starting_vision_pos_fusion` in `estimator_event_flags`; take-off about 12.7 s into the log). Until then the EKF runs on optical flow and the rangefinder (EV innovation exactly 0, flow innovations non-zero), the estimate drifts by up to 0.10-0.33 m (8 runs, seeds 20, 21, 22, 24, 25, 26) and at fusion start it jumps back to the mocap position (`reset_pos_to_vision`). The runs where fusion started before take-off had at most 0.03 m error in that window. The estimate-gate failure in the noise runs (seed 26, 0.301 m) is this window; in the 4 of 30 noise runs with the largest ulog error (0.30-0.33 m) it is the same window.
+- [F] Not the cause: collisions (error at the collision samples 0.02-0.2 m), EKF position resets in flight (2 of 90 runs, both after a collision: seed 24 run 3 at 240 s, seed 65 at 163 s; every other reset is in the first 20 s), RTF dips later in the run (the only deep dips are the first 10-20 s).
+- [H] Mechanism: every run starts with an RTF dip (minimum 0.03-0.6 during start-up of PX4, Gazebo, camera driver and host nodes). PX4 time and the host clock then drift apart by 0.3-0.8 s within the first 10 s (`timesync_status` estimated offset, sampled live: -0.77 s after 10 s, estimated and observed offset differing by 0.2-0.4 s while it settles), the vision samples carry wall-clock sample times converted with that offset, and the EKF starts fusing them only when the offset has settled (the log shows `timestamp_sample` ahead of `timestamp` by a few ms until then and equal after). On real hardware PX4 time is the wall clock, so this is a simulator start-up effect; the gate below is still right there (never take off on an unaided estimate).
+- **Fix.** The flight client does not arm until PX4 reports `cs_ev_pos` for 1.5 s (`BridgeStatus.ev_pos_fused`, read by the bridge relay from `estimator_status_flags`, no new topic across the wifi link; `require_ev`, set by the host entrypoint for mocap and vo localisation, gives up after 30 s and says so). Result, 60 runs: fusion started 3.5-3.8 s before take-off in all, no run waited out the limit, flow-only error before fusion <= 0.03 m, **estimate error max 0.27 m over the 60 runs (median of the run maxima 0.17 m, before 0.19 m, 2 of 40 above 0.3 m)**. Take-off is 5-8 s later.
+- [NV] The 0.9-1.4 m single-sample spikes of the earlier held-out runs are not reproduced (none of 90 runs here); if they were this window plus a crash, they are gone, but it was not checked on those runs. Brief 0.15-0.25 m excursions of 0.3-1 s at 0.3-0.9 m/s remain in the estimate with fusion on (the tracking lag of a 30 Hz EV stream with 40 ms assumed delay) and were not investigated.
+
+### 3. Reactive clearance guard [F]
+
+Build (all pure modules with unit tests, commands only as ordinary goto goals through the flight client's safety gate; nothing is sent to PX4 directly):
+- `maverick_mapping.clearance`: nearest occupied cell per 15 degree bearing sector around the body centre (height band 0.35-1.6 m, radius 0.8 m) from the voxel map; `mapping_node` publishes it after every depth integration (<= 5 Hz, `/maverick/map/clearance`), instead of the planner grid's 1 Hz.
+- `maverick_skills.guard` + `skill_node`, 10 Hz: heading from the pose-derived velocity (else towards the current goal), speed towards the obstacle `v`. Slow (speed cap 0.25 m/s) when an occupied cell lies within 0.40 + 0.6 v in a +-50 degree cone; **stop** (hold at the current position, the skill sends the waypoint again after 1.2 s, a second stop at the same waypoint counts as stuck and the viewpoint is blacklisted) within 0.24 + 0.4 v in a +-35 degree cone when closing in at >= 0.2 m/s, or within 0.20 m whatever the speed; **nudge** (up to 0.12 m away) when anything is within 0.20 m, at most 4 per 10 s.
+- Why these numbers [F]: the depth camera sits 0.07 m ahead of the body and does not see closer than 0.15 m, so an obstacle straight ahead is invisible below about 0.22 m (first version: stop at 0.20 m, it fired after the contact in seeds 24, 26, 27); the planner already keeps 0.35 m, so bigger base distances fought the planner (a version with stop at 0.30 m and keepouts around the obstacle made explore give up viewpoints beside walls: seed 21 ended at 76 s); a drone at rest next to an obstacle must be able to move away (seed 26 froze 15 s beside a wall). The narrow stop cone keeps door frames passed at 0.25 m from stopping the drone.
+
+Effect on the 60 tuning seeds (one run each, EV gate and guard together; baseline = 40 seeds 20-59 of the previous section; mean RTF 0.98, 7 of 60 runs had a run-mean RTF under 0.95, the other agent's stack was running):
+
+| Code | Pass | Pass, old C6 rule | Collision runs (collisions) | Coverage < 0.9 | C6 < 0.95 (new / old rule) | Estimate gate | Median explore wall |
+|---|---|---|---|---|---|---|---|
+| before, seeds 20-59 (40) | 30 | 30 | 7 (11) | 1 | n/a / 5 | 2 | 160 s |
+| after, seeds 20-59 (40) | 30 | 28 | 4 (14) | 3 | 5 / 7 | 0 | 159 s |
+| after, seeds 60-79 (20) | 15 | 15 | 4 (5) | 2 | 1 / 1 | 0 | 156 s |
+| after, seeds 20-79 (60) | **45 (75%)** | 43 | 8 (19) | 5 | 6 / 8 | 0 | 159 s |
+
+Seeds 20-29 alone: 8/10 pass (7/10 under the old C6 rule), 0 collisions in 10 runs (the noise runs without guard: 5 collision runs in 30), the failures C6 on 24 and 28. Guard activity: 51 of 60 runs had at least one stop (median 4, max 25), 33 had a nudge (median 1, max 24). goto_room on seeds 20-29 with the final code: **8/10** (old rule 6/10; before 7/10 and 6/10): ended 0.28 and 0.51 m inside in the two failures; no regression.
+
+The guard does not move the pass rate: 30/40 before and after on the same seeds, collision runs 7 -> 4 of 40 (not significant at this size). What is left [F]: of the 8 collision runs, 7 start with a contact at low speed or hovering (0.04-0.2 m/s; the eighth at 0.64 m/s), and in 7 of the 8 the final map's nearest occupied cell is 0.11-0.26 m from the contact point while the true surface is at 0.15 m: a side or edge of furniture that the forward camera never saw or saw from one side. The guard cannot stop for what the map does not contain. After a contact the explore skill still ends early ("explored everything reachable") with coverage 0.67-0.89 (seeds 54, 58, 65, 70). Seed 48 has coverage 0.864 without a collision.
+
+### 4. Final report run on fresh held-out seeds 1000300-1000329 [F]
+
+30 apartments never used (no earlier `results.jsonl` contained them; ledger), code as pushed (EV gate, guard v4, C6 rule of 2026-11-12), small drone, mocap (not exit results), one run per seed and scenario, 2 stacks, mean RTF 0.987 (explore) / 0.989 (goto_room), one run of 30 below a run-mean of 0.95 (min 0.92). Only the result lines and aggregate metrics were read; no run of these seeds was inspected and none will be used for tuning.
+
+| Scenario | Pass | Notes |
+|---|---|---|
+| explore (C1, C6) | **21/30 (70%)**; old C6 rule 17/30 (57%) | collisions in 7 runs (23 collisions; seeds 1000300, 309, 311, 312, 313, 325, 329, the last with 7); C6 (new rule) < 0.95 in 2 (1000307 0.86, 1000310 0.70; old rule 7 runs); coverage < 0.9 in 2 (1000300 0.76 after 3 collisions, 1000310 0.52); estimate error max 0.25 m over all runs (0 gate failures); surface error < 0.1 m in all; time budget used up in 5 runs, median explore wall 216 s |
+| goto_room (C2, current rule) | **23/30 (77%)**; old rule 10/30 | 7 failures: 4 x "stuck on the way to the kitchen" (1000305, 321, 326, 329), 3 ended inside the kitchen but short of the required clearance (0.48 / 0.66, 0.49 / 0.60, 0.61 / 0.81 m); 10 of the 30 goto runs had collisions during the explore phase, which the C2 verdict does not count |
+
+Against the earlier held-out sets with the previous code (explore 15/30 = 50% over 1000100-109 re-run and 1000200-219, goto 14/20 on 1000200-219 and 8/10 on 1000100-109): explore 21/30 now, **17/30 under the old C6 rule, the like-for-like number**, so the explore gain is within the noise of Section 1 (+-15 points) and the part that is not within noise is the C6 rule change, not the drone. goto_room 77% against 70-80% before: unchanged. Held-out explore collision runs 7/30 (23%) against 8/60 (13%) on the tuning seeds: the guard did not remove the collision mode on fresh apartments, and the held-out apartments take longer (median 216 s against 159 s, 5 budget exhaustions against 2).
+
+### 5. Open issues
+
+- [F] **Collisions are a sensing problem, not a control one.** 7 of 8 tuning collision runs start with a slow or hovering contact (held-out runs were not inspected) with a side or edge that the map never held; the forward camera has a 0.15 m minimum range and 0.07 m of the body in front of it. Ideas [H]: a ring of 4-6 cheap time-of-flight sensors on the bridge board (one more sensor stream; it must not require a companion computer), approach every viewpoint along the camera axis and look before the last 0.5 m, or a 360 degree yaw scan whenever the body is within 0.4 m of an occupied or unobserved cell.
+- [F] After a contact `explore` still ends early ("explored everything reachable") with coverage 0.5-0.9 (tuning 54, 58, 65, 70; held-out 1000300, 1000310). Continuing after a contact (hold, re-scan, re-plan with the contact cell marked) was not built [H].
+- [F] C6 misses that remain are openings below the 3-cell frontier cluster minimum (tuning seed 21: an alcove behind a 0.2 m opening, recall 0.33 whatever the rule) and regions sealed by 0.3-0.4 m fat map walls. Treating 2-cell frontiers next to a large unknown area as frontiers, and thinner walls (depth noise model, occupancy threshold), were not tried [H].
+- [E] Explore is slower on held-out apartments (median 216 s, 5 of 30 hit the 360 s budget) than on tuning (159 s); slow zones of the guard and the retry sweeps cost time; a larger budget or faster flight away from obstacles would raise coverage in those runs.
+- [NV] The timesync mechanism behind the late EV fusion is a hypothesis (correlation and the offset drift are measured). The 0.9-1.4 m single-sample spikes of earlier held-out runs were not reproduced; brief 0.15-0.25 m excursions with fusion on were not investigated.
+- [E] All explore and goto numbers here have +-15 points of run-to-run noise (Section 1); claims below that size need several runs per seed.
+- [NV] Not re-run: flow-only localisation after these changes (the EV gate is off there), and the pure-Python tests of the gateway handshake (`handshake_burst`, known to time out in the container).

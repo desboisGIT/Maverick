@@ -33,6 +33,8 @@ Everything runs in Docker through `just` (recipes in `justfile`). Host setup onc
 - PX4 v1.17.0 SITL publishes **versioned** topic names for versioned messages, e.g. `/fmu/out/vehicle_status_v1` and `/fmu/out/vehicle_local_position_v1`, but `/fmu/out/vehicle_land_detected` and `/fmu/in/*` are unversioned. Check the `uxrce_dds_client` lines in the sim log before trusting a topic name.
 - PX4 parameter overrides go in `compose.yaml` as `PX4_PARAM_<NAME>`. The entrypoint re-applies them after startup, because rcS applies them before the airframe's `param set-default`, which otherwise wins. `NAV_DLL_ACT=0` is required to arm without a ground-control station.
 
+- In SITL the first 10-20 s after `compose up` have deep real-time-factor dips, the PX4/host clock offset moves by 0.3-0.8 s meanwhile, and PX4 then starts fusing external vision (mocap / VO) 0-7 s after take-off in about half the runs: flow-only drift of up to 0.33 m, then a position jump. The flight client therefore waits for `estimator_status_flags.cs_ev_pos` (relayed as `BridgeStatus.ev_pos_fused`) before arming when `require_ev` is set (mocap / vo). Per-run PX4 estimator diagnostics: `scripts/ulog_extract.py` output in each S3 run directory (`ekf.json`).
+
 ## Decisions code must respect
 
 - Simulation is Gazebo Harmonic + PX4 SITL + ROS 2 Jazzy, run in Ubuntu 24.04 Docker containers. The host runs Ubuntu 26.04, which PX4/Harmonic/Isaac Sim don't list as supported. Isaac Sim is a later, optional stage.
