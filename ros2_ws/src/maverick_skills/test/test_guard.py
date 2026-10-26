@@ -36,12 +36,12 @@ def test_obstacle_ahead_slows_then_stops():
     assert g.evaluate(sectors(b0=0.45), 0.0, 0.3).speed_cap == g.cfg.slow_speed
     d = g.evaluate(sectors(b0=0.28), 0.0, 0.3)  # closing in at 0.3 m/s
     assert d.action == "stop"
-    assert abs(d.bearing) < 0.2  # the obstacle's bearing, for the keepout
+    assert abs(d.bearing) < 0.2
 
 
 def test_stop_distance_grows_with_speed_and_needs_closing_in():
     assert g.evaluate(sectors(b0=0.5), 0.0, 0.3).action == "slow"
-    assert g.evaluate(sectors(b0=0.5), 0.0, 0.8).action == "stop"  # 0.30 + 0.35 * 0.8 = 0.58
+    assert g.evaluate(sectors(b0=0.5), 0.0, 0.8).action == "stop"  # 0.24 + 0.4 * 0.8 = 0.56
     # at rest beside an obstacle 0.25 m ahead the drone may move (slowly); only inside the hard
     # stop distance is it held whatever its speed
     assert g.evaluate(sectors(b0=0.25), 0.0, 0.0).action == "slow"

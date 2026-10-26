@@ -97,7 +97,6 @@ class SkillNode(Node):
         self.guard_slow_sent = -1e9
         self.guard_slowed = False
         self.guard_nudges: list[float] = []
-        self.keepouts: list[tuple[float, float, float]] = []  # obstacle x, y, monotonic time
         self.guard_pending: tuple[float, float, float, float] | None = None
         self.guard_stats = {"stop": 0, "nudge": 0, "slow": 0}
 
@@ -124,35 +123,11 @@ class SkillNode(Node):
     def _now(self) -> float:
         return time.monotonic() - self.t0
 
-    def _grid_with_keepouts(self):
-        """The planner's grid with a disk around each recent guard stop's obstacle marked occupied,
-        so that the replan after a stop does not lead back to the same spot."""
-        now = time.monotonic()
-        self.keepouts = [k for k in self.keepouts if now - k[2] < self.guard.cfg.keepout_s]
-        if self.grid is None or not self.keepouts:
-            return self.grid
-        g, res, org = self.grid
-        g = g.copy()
-        r = self.guard.cfg.keepout_m
-        n = int(math.ceil(r / res))
-        for kx, ky, _t in self.keepouts:
-            ci, cj = int((kx - org[0]) / res), int((ky - org[1]) / res)
-            for di in range(-n, n + 1):
-                for dj in range(-n, n + 1):
-                    i, j = ci + di, cj + dj
-                    if (
-                        0 <= i < g.shape[0]
-                        and 0 <= j < g.shape[1]
-                        and math.hypot(di, dj) * res <= r
-                    ):
-                        g[i, j] = 100
-        return g, res, org
-
     def _ctx(self) -> Ctx:
         return Ctx(
             self._now(),
             self.robot_xy,
-            self._grid_with_keepouts(),
+            self.grid,
             self.grid_time,
             robot_yaw=self.robot_yaw,
             trail=self.trail,
@@ -344,11 +319,6 @@ class SkillNode(Node):
                 "heading": round(dec.heading, 2),
                 "v": round(v_toward, 2),
             }
-            if dec.bearing is not None:
-                ox = rx + dec.d_fwd * math.cos(dec.bearing)
-                oy = ry + dec.d_fwd * math.sin(dec.bearing)
-                self.keepouts.append((ox, oy, now))
-                info["obstacle"] = [round(ox, 2), round(oy, 2)]
             s.on_guard(self._ctx(), info)
             self._drain_events(s)
             self.get_logger().warn(f"guard stop {info}")

@@ -227,10 +227,6 @@ class _Base:
             self.follow.force_stuck()
         else:
             self.follow.resend()
-            self.replan_now()
-
-    def replan_now(self) -> None:
-        """Plan again at the next step (the node put a keepout around the obstacle)."""
 
     def ev(self, ctx: Ctx, kind: str, **kw) -> None:
         r = ctx.robot_xy or (0.0, 0.0)
@@ -300,12 +296,6 @@ class ExploreSkill(_Base):
         self.scan_t = 0.0
         self.retries = 0
         self.looked_vp: list[XY] = []  # viewpoints already looked at from where the robot stood
-        self.force_adopt = False  # a replan after a guard stop replaces the path even if same goal
-
-    def replan_now(self) -> None:
-        if self.state == "fly":
-            self.state = "replan"
-            self.force_adopt = True
 
     def _scan(self, ctx: Ctx, out: Out) -> bool:
         """Spin in place in `scan_step_rad` steps with camera yaw feedback. True when done."""
@@ -455,8 +445,6 @@ class ExploreSkill(_Base):
                     same = self.goal is not None and (
                         math.dist(plan.goal.centroid, self.goal.centroid) < 1.2
                     )
-                    same = same and not self.force_adopt
-                    self.force_adopt = False
                     self.last_plan = ctx.now
                     self.n_fronts = len(plan.frontiers)
                     if same:  # keep flying the current path
@@ -521,10 +509,6 @@ class GotoRoomSkill(_Base):
     def on_answer(self, answer: dict) -> None:
         if answer.get("id") == self.qid:
             self.answer = answer
-
-    def replan_now(self) -> None:
-        if self.state == "fly":
-            self.state = "plan"
 
     def _plan_path(self, ctx: Ctx) -> tuple[list[XY], list[bool]] | None:
         grid, res, org = ctx.grid

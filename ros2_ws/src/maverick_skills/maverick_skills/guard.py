@@ -30,9 +30,9 @@ XY = tuple[float, float]
 
 @dataclass(frozen=True)
 class GuardConfig:
-    stop_m: float = 0.30
+    stop_m: float = 0.24
     stop_fan_rad: float = math.radians(35.0)  # half width of the cone in which `stop_m` applies
-    slow_m: float = 0.50
+    slow_m: float = 0.40
     slow_fan_rad: float = math.radians(50.0)
     slow_speed: float = 0.25
     nudge_m: float = 0.20
@@ -42,12 +42,10 @@ class GuardConfig:
     # both distances grow with the speed towards the obstacle; a stop needs the drone to be closing
     # in (a drone at rest next to an obstacle must be free to move away: a hard stop there froze
     # tuning seed 26 beside a wall for 15 s), except inside `hard_stop_m`
-    k_stop_s: float = 0.35
+    k_stop_s: float = 0.40
     k_slow_s: float = 0.6
-    min_closing_mps: float = 0.08
+    min_closing_mps: float = 0.20
     hard_stop_m: float = 0.20
-    keepout_m: float = 0.20  # radius of the keepout the skill planner gets around a stop's obstacle
-    keepout_s: float = 40.0
     min_speed: float = 0.12  # below this the velocity heading is noise; use the goal's heading
     max_age_s: float = 0.8  # a report older than this is ignored (no guard, the skills' margins)
     hold_s: float = 1.2  # how long a stop holds before the skill's goal is sent again
