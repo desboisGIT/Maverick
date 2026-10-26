@@ -45,6 +45,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profi
 from std_msgs.msg import String
 
 from .executive import Executive, WorldView
+from .guard import ClearanceGuard, GuardConfig, VelocityEstimate
 from .skills import Ctx, Out, SkillConfig, goal_message, make_skill
 
 LATCHED = QoSProfile(
@@ -85,6 +86,18 @@ class SkillNode(Node):
         self.people: list[tuple[float, float]] = []
         self.home_xy: tuple[float, float] | None = None
         self.active_rid: str | None = None
+        # reactive clearance guard (guard.py): runs at 10 Hz on the mapping node's clearance report
+        self.guard_on = bool(p("guard", True).value)
+        self.guard = ClearanceGuard(GuardConfig())
+        self.vel = VelocityEstimate()
+        self.clear: dict | None = None
+        self.clear_rx = -1e9
+        self.guard_hold_until = -1e9
+        self.guard_goal: tuple[float, float, float, float] | None = None  # x, y, yaw, speed
+        self.guard_slow_sent = -1e9
+        self.guard_slowed = False
+        self.guard_pending: tuple[float, float, float, float] | None = None
+        self.guard_stats = {"stop": 0, "nudge": 0, "slow": 0}
 
         self.create_subscription(String, T.SKILL_REQUEST, self._on_request, RELIABLE)
         self.create_subscription(OccupancyGrid, T.MAP_GRID, self._on_grid, LATCHED)
@@ -94,12 +107,16 @@ class SkillNode(Node):
         self.create_subscription(String, T.MEM_DETECTIONS, self._on_detections, RELIABLE)
         self.create_subscription(String, T.MEM_ROOMS, self._on_rooms, LATCHED)
         self.create_subscription(String, T.MEM_OBJECTS, self._on_objects, LATCHED)
+        self.create_subscription(
+            String, T.MAP_CLEARANCE, self._on_clearance, qos_profile_sensor_data
+        )
         self.mission_pub = self.create_publisher(String, T.FLIGHT_MISSION, 10)
         self.goal_pub = self.create_publisher(String, T.FLIGHT_GOAL, 10)
         self.query_pub = self.create_publisher(String, T.MEM_QUERY, RELIABLE)
         self.progress_pub = self.create_publisher(String, T.SKILL_PROGRESS, LATCHED)
         self.path_pub = self.create_publisher(String, T.SKILL_PATH, LATCHED)
         self.create_timer(1.0 / float(p("tick_hz", 2.0).value), self._tick)
+        self.create_timer(0.1, self._guard_tick)
         self.get_logger().info("skill_node up")
 
     def _now(self) -> float:
@@ -130,9 +147,17 @@ class SkillNode(Node):
             float(t[1]) - self.cam_fwd * math.sin(yaw),
         )
         self.robot_yaw = yaw
+        self.vel.add(time.monotonic(), self.robot_xy)
         if not self.trail or math.dist(self.trail[-1], self.robot_xy) > 0.1:
             self.trail.append(self.robot_xy)
             del self.trail[:-6000]
+
+    def _on_clearance(self, msg: String) -> None:
+        try:
+            self.clear = json.loads(msg.data)
+            self.clear_rx = time.monotonic()
+        except ValueError:
+            pass
 
     def _on_status(self, msg: String) -> None:
         try:
@@ -248,6 +273,69 @@ class SkillNode(Node):
         if s.finished:
             self.executive.finished()
 
+    def _guard_tick(self) -> None:
+        s = self.skill
+        if not self.guard_on or s is None or s.finished or self.robot_xy is None:
+            return
+        if self.require_hover and self.phase != "hover":
+            return
+        now = time.monotonic()
+        if now < self.guard_hold_until:
+            return
+        if self.guard_pending is not None:  # the skill's goal that arrived during a hold
+            x, y, yaw, speed = self.guard_pending
+            self.guard_pending = None
+            self.goal_pub.publish(
+                String(data=json.dumps(goal_message(x, y, self.cfg.altitude, yaw, speed)))
+            )
+            return
+        if self.clear is None or now - self.clear_rx > self.guard.cfg.max_age_s:
+            return
+        gx, gy, gyaw, gspeed = self.guard_goal or (None, None, 0.0, self.cfg.speed)
+        to_goal = None if gx is None else (gx - self.robot_xy[0], gy - self.robot_xy[1])
+        heading = self.guard.heading(self.vel.velocity(), to_goal)
+        dec = self.guard.evaluate(list(self.clear["sectors"]), heading)
+        if dec.action == "ok":
+            if self.guard_slowed and gx is not None:  # clear again: back to the skill's speed
+                self.guard_slowed = False
+                self.goal_pub.publish(
+                    String(data=json.dumps(goal_message(gx, gy, self.cfg.altitude, gyaw, gspeed)))
+                )
+            return
+        z = self.cfg.altitude
+        rx, ry = self.robot_xy
+        if dec.action == "stop":
+            self.guard_stats["stop"] += 1
+            self.guard_hold_until = now + self.guard.cfg.hold_s
+            self.goal_pub.publish(String(data=json.dumps(goal_message(rx, ry, z, 0.0, 1.0))))
+            info = {
+                "d_fwd": round(dec.d_fwd, 3),
+                "d_min": round(dec.d_min, 3),
+                "heading": round(dec.heading, 2),
+            }
+            s.on_guard(self._ctx(), info)
+            self._drain_events(s)
+            self.get_logger().warn(f"guard stop {info}")
+        elif dec.action == "nudge":
+            self.guard_stats["nudge"] += 1
+            self.guard_hold_until = now + 0.8
+            ax, ay = dec.away
+            self.goal_pub.publish(
+                String(
+                    data=json.dumps(
+                        goal_message(rx + ax * dec.step, ry + ay * dec.step, z, 0.0, 0.3)
+                    )
+                )
+            )
+            s.ev(self._ctx(), "guard_nudge", d_min=round(dec.d_min, 3), step=round(dec.step, 3))
+            self._drain_events(s)
+        elif dec.action == "slow" and now - self.guard_slow_sent > 0.5 and gx is not None:
+            self.guard_stats["slow"] += 1
+            self.guard_slow_sent = now
+            self.guard_slowed = True
+            cap = min(dec.speed_cap, gspeed)
+            self.goal_pub.publish(String(data=json.dumps(goal_message(gx, gy, z, gyaw, cap))))
+
     def _drain_events(self, s) -> None:
         if not s.events:
             return
@@ -263,10 +351,15 @@ class SkillNode(Node):
         z = self.cfg.altitude
         if out.goal is not None:
             x, y, yaw = out.goal
-            self.goal_pub.publish(
-                String(data=json.dumps(goal_message(x, y, z, yaw, out.speed or self.cfg.speed)))
-            )
+            speed = out.speed or self.cfg.speed
+            self.guard_goal = (x, y, yaw, speed)
+            self.guard_slowed = False
+            if time.monotonic() < self.guard_hold_until:
+                self.guard_pending = (x, y, yaw, speed)  # sent when the hold ends
+            else:
+                self.goal_pub.publish(String(data=json.dumps(goal_message(x, y, z, yaw, speed))))
         elif out.hold and ctx.robot_xy is not None:
+            self.guard_goal = None
             x, y = ctx.robot_xy
             self.goal_pub.publish(
                 String(data=json.dumps(goal_message(x, y, z, 0.0, self.cfg.speed)))

@@ -126,6 +126,16 @@ class WaypointFollower:
         self._new = False
         self._best = math.inf
         self._t_best = 0.0
+        self._force_stuck = False
+
+    def resend(self) -> None:
+        """Send the current waypoint again (the reactive guard held the drone and dropped it)."""
+        if self.target is not None:
+            self._new = True
+
+    def force_stuck(self) -> None:
+        """The next update() reports 'stuck' (repeated guard stops at this waypoint)."""
+        self._force_stuck = True
 
     @property
     def target(self) -> XY | None:
@@ -158,6 +168,10 @@ class WaypointFollower:
 
     def update(self, robot: XY, now: float) -> str:
         """'moving', 'arrived' (all waypoints reached) or 'stuck'."""
+        if self._force_stuck:
+            self._force_stuck = False
+            self._best, self._t_best = math.inf, now
+            return "stuck"
         while self.i < len(self.wps) and math.dist(robot, self.wps[self.i]) < (
             self.arrive_radius_slow if self.target_slow else self.arrive_radius
         ):
@@ -198,6 +212,21 @@ class _Base:
         self.n_paths = 0
         self.last_path: dict | None = None
         self.events: list[dict] = []  # decision log, drained by the node (debugging, referee)
+        self._guard_wp: XY | None = None
+        self.guard_n = 0
+
+    def on_guard(self, ctx: Ctx, info: dict) -> None:
+        """The reactive guard (guard.py) held the drone. The first stop at a waypoint sends it
+        again after the hold; the second counts as a stall (viewpoint blacklisted, replan)."""
+        t = self.follow.target
+        same = t is not None and self._guard_wp is not None and math.dist(t, self._guard_wp) < 0.3
+        self.guard_n = self.guard_n + 1 if same else 1
+        self._guard_wp = t
+        self.ev(ctx, "guard_stop", n=self.guard_n, **info)
+        if self.guard_n >= 2:
+            self.follow.force_stuck()
+        else:
+            self.follow.resend()
 
     def ev(self, ctx: Ctx, kind: str, **kw) -> None:
         r = ctx.robot_xy or (0.0, 0.0)

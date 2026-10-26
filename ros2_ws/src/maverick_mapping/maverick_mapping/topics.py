@@ -29,3 +29,5 @@ SKILL_PATH = "/maverick/skill/path"  # String JSON (gateway path), latched
 FLIGHT_GOAL = "/maverick/flight/goal"
 FLIGHT_STATUS = "/maverick/flight/status"
 FLIGHT_MISSION = "/maverick/flight/mission"
+
+MAP_CLEARANCE = "/maverick/map/clearance"  # String JSON, <= 5 Hz: nearest occupied cell per sector

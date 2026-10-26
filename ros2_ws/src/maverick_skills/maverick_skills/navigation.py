@@ -66,6 +66,10 @@ class CompoundSkill(_Base):
             return leg.result
         return None
 
+    def on_guard(self, ctx: Ctx, info: dict) -> None:
+        if self.leg is not None and not self.leg.finished:
+            self.leg.on_guard(ctx, info)
+
     def progress(self, state, progress, message, eta=None) -> dict:
         d = super().progress(state, progress, message, eta)
         if self.result_data is not None:

@@ -23,6 +23,7 @@ referee's scoring); the response message is the path.
 from __future__ import annotations
 
 import json
+import math
 import sys
 import time
 
@@ -41,6 +42,8 @@ from std_msgs.msg import Empty, String
 from std_srvs.srv import Trigger
 
 from . import topics as T
+from .clearance import occupied_window, sector_clearance
+from .drone import drone_config
 from .frontiers import detect_frontiers
 from .map_io import save_map
 from .ros_conv import (
@@ -66,6 +69,8 @@ class MappingNode(Node):
     def __init__(self) -> None:
         super().__init__("mapping_node")
         p = self.declare_parameter
+        self.cam_fwd = drone_config().camera_forward_m  # body centre is this far behind the lens
+        self.clear_rmax = float(p("clearance_rmax_m", 0.8).value)
         self.vmap = VoxelMap(p("resolution", 0.1).value, max_range=float(p("max_range", 5.0).value))
         self.stride = int(p("stride", 1).value)
         self.band = tuple(float(v) for v in p("band", [0.35, 1.6]).value)
@@ -91,6 +96,7 @@ class MappingNode(Node):
         self.grid_pub = self.create_publisher(OccupancyGrid, T.MAP_GRID, LATCHED)
         self.front_pub = self.create_publisher(String, T.MAP_FRONTIERS, LATCHED)
         self.vox_pub = self.create_publisher(String, T.MAP_VOXELS, RELIABLE)
+        self.clear_pub = self.create_publisher(String, T.MAP_CLEARANCE, qos_profile_sensor_data)
         self.create_timer(1.0 / float(p("grid_rate_hz", 1.0).value), self._publish_grid)
         self.create_timer(1.0 / float(p("delta_rate_hz", 4.0).value), self._publish_delta)
         self._want_reset = True
@@ -132,7 +138,25 @@ class MappingNode(Node):
         t_wc, r_wc = pose_to_tr(pose_msg)
         self.vmap.integrate_depth(depth, intr, t_wc, r_wc, stride=self.stride)
         self.last_stamp = stamp_to_sec(depth_msg.header.stamp)
+        self._publish_clearance(t_wc, r_wc)
         self.integrate_ms = 1e3 * (time.perf_counter() - t0)
+
+    def _publish_clearance(self, t_wc, r_wc) -> None:
+        """Nearest occupied cell per bearing sector around the body centre (reactive guard)."""
+        fwd = r_wc[:, 2]  # optical z axis (viewing direction) in the map frame
+        yaw = math.atan2(float(fwd[1]), float(fwd[0]))
+        c = (
+            float(t_wc[0]) - self.cam_fwd * math.cos(yaw),
+            float(t_wc[1]) - self.cam_fwd * math.sin(yaw),
+        )
+        occ, org = occupied_window(self.vmap, c, self.clear_rmax, self.band)
+        sectors = sector_clearance(occ, self.vmap.res, org, c, self.clear_rmax)
+        msg = {
+            "t": round(time.time(), 3),
+            "xy": [round(c[0], 3), round(c[1], 3)],
+            "sectors": sectors,
+        }
+        self.clear_pub.publish(String(data=json.dumps(msg, separators=(",", ":"))))
 
     # -- outputs -----------------------------------------------------------------------------
     def _publish_grid(self) -> None:
