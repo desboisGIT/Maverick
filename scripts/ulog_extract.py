@@ -43,20 +43,24 @@ def main() -> None:
         gx = np.interp(t, tg, gt["x"] - gt["x"][0])
         gy = np.interp(t, tg, gt["y"] - gt["y"][0])
         err = np.hypot(lp["x"] - gx, lp["y"] - gy)
-        cols = thin(t, lp["x"], lp["y"], lp["z"], gx, gy, err, lp["xy_reset_counter"], lp["xy_valid"])
-        out["pos"] = dict(zip(["t", "x", "y", "z", "gx", "gy", "err", "xy_reset", "xy_valid"], cols))
+        names = ["t", "x", "y", "z", "gx", "gy", "err", "xy_reset", "xy_valid"]
+        cols = thin(
+            t, lp["x"], lp["y"], lp["z"], gx, gy, err, lp["xy_reset_counter"], lp["xy_valid"]
+        )
+        out["pos"] = dict(zip(names, cols, strict=True))
     es = topic(u, "estimator_status")
     if es is not None:
         t = es["timestamp"] / 1e6
-        cols = thin(t, es["pos_test_ratio"], es["hdg_test_ratio"], es["time_slip"],
-                    es["reset_count_pos_ne"])
-        out["status"] = dict(zip(["t", "pos_test_ratio", "hdg_test_ratio", "time_slip",
-                                  "reset_pos_ne"], cols))
+        names = ["t", "pos_test_ratio", "hdg_test_ratio", "time_slip", "reset_pos_ne"]
+        cols = thin(
+            t, es["pos_test_ratio"], es["hdg_test_ratio"], es["time_slip"], es["reset_count_pos_ne"]
+        )
+        out["status"] = dict(zip(names, cols, strict=True))
     inn = topic(u, "estimator_innovations")
     if inn is not None:
         t = inn["timestamp"] / 1e6
         cols = thin(t, inn["ev_hpos[0]"], inn["ev_hpos[1]"], inn["flow[0]"], inn["flow[1]"])
-        out["innov"] = dict(zip(["t", "ev0", "ev1", "flow0", "flow1"], cols))
+        out["innov"] = dict(zip(["t", "ev0", "ev1", "flow0", "flow1"], cols, strict=True))
     ev = topic(u, "estimator_event_flags")
     if ev is not None:
         names = [k for k in ev if k.startswith(("reset_", "starting_"))]
@@ -71,7 +75,8 @@ def main() -> None:
         t = fl["timestamp"] / 1e6
         out["cs_ev_pos_changes"] = [
             [round(float(t[i]), 3), int(fl["cs_ev_pos"][i])]
-            for i in range(1, len(t)) if fl["cs_ev_pos"][i] != fl["cs_ev_pos"][i - 1]
+            for i in range(1, len(t))
+            if fl["cs_ev_pos"][i] != fl["cs_ev_pos"][i - 1]
         ]
     sys.stdout.write(json.dumps(out))
 
