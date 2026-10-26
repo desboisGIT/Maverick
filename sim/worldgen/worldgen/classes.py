@@ -30,5 +30,10 @@ FURNITURE = (
     "rug",
 )
 
-CLASSES: dict[str, int] = {name: i for i, name in enumerate(STRUCTURAL + FURNITURE, start=1)}
+# S4b: small objects and people, appended after the furniture (ids of the earlier classes stay).
+SMALL = ("banana", "bread", "person")
+
+CLASSES: dict[str, int] = {
+    name: i for i, name in enumerate(STRUCTURAL + FURNITURE + SMALL, start=1)
+}
 BACKGROUND = 0

@@ -56,6 +56,8 @@ class RosExecutive:
         self._result: queue.Queue[SkillResult] = queue.Queue()
         self._active = False
         self._ignore_cancel = False
+        self._rid: str | None = None  # id of the request in flight (the executive echoes it)
+        self._rn = 0
         self._answers: dict[str, dict] = {}
         self._answer_ev = threading.Event()
         self._qn = 0
@@ -68,7 +70,12 @@ class RosExecutive:
             self._result.get_nowait()
         self._ignore_cancel = self._active  # skill_node reports the replaced skill as cancelled
         self._active = True
-        self.n.skill_pub.publish(String(data=json.dumps(skill_request(name, args))))
+        self._rn += 1
+        self._rid = f"agent-{self._rn}"
+        req = {**skill_request(name, args), "id": self._rid}
+        if name == "return_home":
+            req["land"] = True  # the tool's contract: fly back to the take-off point and land
+        self.n.skill_pub.publish(String(data=json.dumps(req)))
 
     def wait_skill(self, timeout_s: float) -> SkillResult | None:
         try:
@@ -91,6 +98,9 @@ class RosExecutive:
         state = d.get("state")
         if not self._active or state not in TERMINAL:
             return
+        rid = d.get("request_id")
+        if rid is not None and self._rid is not None and rid != self._rid:
+            return  # a result of an earlier request
         if state == "cancelled" and self._ignore_cancel:
             self._ignore_cancel = False
             return

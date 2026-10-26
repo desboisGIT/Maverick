@@ -81,3 +81,32 @@ DeepSeek's miss: "make me a coffee" made it query memory and start `goto_room ki
 3. Executive validation + `come_to` with a static actor.
 4. Console text path + TTS → H2 by text on tuning seeds.
 5. Mic simulation + ASR → H1/H2 by voice on held-out seeds.
+
+## 8. S4b built (branch of 2026-11-11; with mocap, tuning seeds only, not exit results)
+
+**What exists** [F]
+- Worldgen extras (`sim/worldgen/worldgen/extras.py`): classes `banana`, `bread`, `person` appended (ids 27-29, nothing renumbered). Each small object is present with probability 0.7 on a kitchen counter or table (absent 30 %); a mannequin (red shirt, collides) stands in a living room, bedroom or office at least 1.6 m from the take-off point (about 87 % of tuning seeds 0-99 get one). Own random stream, so layouts are unchanged; manifest keys `small_objects`, `presence`, `people` are referee-only. The S3 referee still generates worlds without extras (`make_world(extras=False)`).
+- Detector and memory: the segmentation detector reports the new classes (small ones need 6 pixels instead of 32, same noise model); detection payloads carry the lifted map position; memory keeps the best RGB crop of small objects and people (`/tmp/maverick_photos/<obj>.jpg`, path in the `find` answer), `find` can return unconfirmed objects, `search_plan` lists rooms with a goal and the surfaces in them.
+- Executive (`maverick_skills/executive.py`, pure; wired into `skill_node`): validates every request (grammar, budgets 10-900 s, room/person known, stand-off never under 1.0 m, one motion skill at a time, cancel always works), assigns a request id (the request's `id`, else `ex-n`) echoed as `request_id` in every progress message; structured outcomes under `result`; rejections come back as `failed` with `rejected: true` and a `code`. Run-time guard: a goto/search/come_to/return goal closer than 1.0 m to a known person ends the skill with "refused". The agent's `RosExecutive` now sends ids and ignores results of other requests; `return_home` sends `land: true`.
+- Skills: `search.py` (plan from memory, fly to each room goal, 360 degree yaw sweep, viewpoints 1.3 m from each surface, stop on 2 frames at confidence 0.6 within 0.5 m of each other, confirm with memory, report position and photo; else "not found, searched ..."), `come_to.py` (person from memory, free stop point 1.35 m away on the approach side, face the person; `ReturnSkill` flies to the first-hover point, optionally lands). Built on the goto A* via `GotoXY`; planner and explore are untouched.
+- Referee: `just test-s4 --seeds 10-19 --stacks 3` (`referee/s4.py`, verdicts in `s4_verdicts.py`): explore, search banana, search bread, come_to, return, all in one run.
+
+**Tests** [F]: 12+ unsafe calls (24 cases) rejected in `test_executive.py`; `pytest` 363 tests pass except the unrelated `test_protocol.py` websocket test that times out under `--network none` (also before these changes).
+
+**Results**, tuning seeds 10-19, small drone, mocap, explore 300 s, one run each, stack 3 [F]
+
+| Check | Result |
+|---|---|
+| search correct (banana + bread) | 19/20: present 13/14 found within 0.3 m (error 0.01-0.13 m), absent 6/6 correctly not found, 0 false positives |
+| search, per seed (both objects right) | 9/10 |
+| come_to (7 seeds with a person; 1.35 m stand-off) | 6/7 ended 1.29-1.39 m away, never under 1.0 m; seed 15 ended 1.65 m (a fall-back ring point, ring now capped at +0.1 m, **not re-flown** [NV]) |
+| return | 6/7; seed 12 refused because the path went 0.72 m from the person |
+
+First dev run (seed 10) with stand-off 1.5 m ended 1.59 m away, so the default became 1.35 m.
+
+**Open issues**
+- [F] Seed 14: banana present, not found after searching kitchen, living, bathroom, hallway; not investigated.
+- [F] The 1.0 m guard fails `return` when the shortest path passes a person (seed 12); the path planner does not know about the person clearance. Explore is not guarded at all (planner untouched by request).
+- [F] Perception is the oracle segmentation detector with noise; a real detector will see bananas far worse (a banana is 6-40 pixels at 160x120).
+- [NV] Person position is the visible-surface box centre (about 0.1 m bias); 3 of 10 seeds had no person so come_to ran on 7.
+- [NV] One run per seed; no run-to-run noise measured. Held-out seeds untouched.

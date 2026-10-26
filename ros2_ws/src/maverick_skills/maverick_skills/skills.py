@@ -57,6 +57,16 @@ class SkillConfig:
     retry_passes: int = 2
     retry_min_budget_s: float = 40.0
     planner: PlannerConfig = field(default_factory=PlannerConfig)
+    # S4b skills (search.py, come_to.py)
+    search_conf: float = 0.6  # detector confidence that counts as a sighting
+    search_agree_m: float = 0.5  # two sightings this close (xy) in different frames = found
+    search_dwell_s: float = 0.8  # pause at each yaw step of a sweep (detector runs at ~5 Hz)
+    search_look_s: float = 1.2  # pause at each yaw of a surface viewpoint
+    search_standoff: float = 1.3  # viewpoint distance from a surface's face, m
+    search_person_avoid_m: float = 1.2  # no search viewpoint closer than this to a person
+    min_person_m: float = 1.0  # never closer than this to a person (executive guard)
+    come_to_tolerance: float = 0.2
+    return_tolerance: float = 0.25
 
 
 @dataclass
@@ -69,6 +79,8 @@ class Ctx:
         None  # camera heading, rad ccw from +x (None: no yaw feedback, no scans)
     )
     trail: list | None = None  # own flown positions (map frame), for the last-resort path
+    frames: list = field(default_factory=list)  # detection payloads received since the last step
+    people: list = field(default_factory=list)  # last known (x, y) of every person in memory
 
 
 @dataclass
@@ -79,6 +91,7 @@ class Out:
     path: dict | None = None  # gateway `path` data
     progress: dict | None = None  # gateway `skill_progress` data
     query: dict | None = None  # memory query to publish
+    mission: str | None = None  # flight client mission command ("land"), sent on completion
     finished: bool = False
 
 
@@ -593,4 +606,8 @@ def make_skill(req: dict, cfg: SkillConfig, now: float) -> _Base | None:
         if not rt:
             raise ValueError("goto_room needs room_type")
         return GotoRoomSkill(cfg, now, rt)
+    if kind in ("search", "come_to", "return"):
+        from .extra_skills import make_extra_skill  # S4b skills; imports this module
+
+        return make_extra_skill(req, cfg, now)
     raise ValueError(f"unknown skill {kind!r}")

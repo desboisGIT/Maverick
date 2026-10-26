@@ -88,12 +88,12 @@ def wait_for(pred, timeout: float, poll: float = 0.5):
 
 
 # -- world -------------------------------------------------------------------------------------
-def make_world(seed: int) -> dict:
+def make_world(seed: int, extras: bool = False) -> dict:
     """Generate and validate apt_<seed>; return its manifest and file paths."""
     from worldgen import generate
     from worldgen.validate import validate
 
-    world = generate(seed)
+    world = generate(seed, small_objects=extras, people=extras)
     problems = validate(world.manifest, world.sdf)
     if problems:
         raise RunError(f"worldgen seed {seed} invalid: {problems}")

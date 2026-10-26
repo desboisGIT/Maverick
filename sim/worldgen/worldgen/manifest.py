@@ -44,8 +44,10 @@ def build_manifest(
     palette: str,
     drone_profile: str,
     options: dict[str, Any],
+    extras: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
+        **(extras or {"small_objects": [], "presence": {}, "people": []}),
         "seed": seed,
         "seed_set": seed_set(seed),
         "generator_version": GENERATOR_VERSION,

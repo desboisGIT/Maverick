@@ -88,6 +88,11 @@ test-failsafe *args:
 test-s3 *args:
     PYTHONPATH=sim/referee python3 -m referee.s3 {{args}}
 
+# S4b: search (bananas, bread), come_to and return in generated apartments, tuning seeds only:
+# e.g. `just test-s4 --seeds 10-14 --stacks 3`
+test-s4 *args:
+    PYTHONPATH=sim/referee python3 -m referee.s4 {{args}}
+
 # Generate random apartment world(s) into sim/worlds/generated/, e.g. `just worldgen 7` or
 # `just worldgen 7 --count 5 --no-ceiling`
 worldgen seed="7" *args:

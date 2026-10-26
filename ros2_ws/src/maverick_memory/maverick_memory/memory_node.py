@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from pathlib import Path
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
@@ -44,9 +45,11 @@ from maverick_mapping.ros_conv import (
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image
 from std_msgs.msg import String
 
+from .lifting import lift_detection
+from .photos import PHOTO_LABELS, FrameBuffer, crop_jpeg
 from .queries import answer_query, detections_json
 from .scene_graph import SceneGraph, SceneGraphConfig
 from .semantic_detector import SemanticDetector
@@ -77,6 +80,9 @@ class MemoryNode(Node):
                 wall_clear=drone.wall_clear,
             )
         )
+        self.photo_dir = Path(str(p("photo_dir", "/tmp/maverick_photos").value))
+        self.photo_min_conf = float(p("photo_min_conf", 0.5).value)
+        self.frames = FrameBuffer()
         self.sync = SyncBuffer(
             ["semantic", "depth", "pose"], tol=float(p("sync_tol_s", 0.03).value)
         )
@@ -91,6 +97,7 @@ class MemoryNode(Node):
         self.create_subscription(Image, T.CAM_SEMANTIC, lambda m: self._feed("semantic", m), q)
         self.create_subscription(Image, T.CAM_DEPTH, lambda m: self._feed("depth", m), q)
         self.create_subscription(PoseStamped, T.CAM_POSE, lambda m: self._feed("pose", m), q)
+        self.create_subscription(CompressedImage, T.CAM_RGB, self._on_rgb, q)
         for qos in (q,):  # sensor-data QoS only (see mapping_node)
             self.create_subscription(CameraInfo, T.CAM_INFO, self._on_info, qos)
         self.create_subscription(OccupancyGrid, T.MAP_GRID, self._on_grid, LATCHED)
@@ -107,6 +114,9 @@ class MemoryNode(Node):
 
     def _on_grid(self, msg: OccupancyGrid) -> None:
         self._grid_msg = msg
+
+    def _on_rgb(self, msg: CompressedImage) -> None:
+        self.frames.add(stamp_to_sec(msg.header.stamp), bytes(msg.data))
 
     def _feed(self, name: str, msg) -> None:
         for m in self.sync.push(name, stamp_to_sec(msg.header.stamp), msg):
@@ -130,12 +140,34 @@ class MemoryNode(Node):
         self.robot_xy = (float(t_wc[0]), float(t_wc[1]))
         self._t_now = stamp
         dets = self.detector.detect(sem, depth)
-        self.sg.add_detections(dets, depth, intr, t_wc, r_wc, now=stamp)
-        payload = detections_json(dets, depth.shape[1], depth.shape[0], stamp)
+        obs = [lift_detection(d, depth, intr, t_wc, r_wc, t=stamp) for d in dets]
+        self.sg.add_observations([o for o in obs if o is not None], stamp)
+        self._save_photos(dets, obs, depth.shape[1], depth.shape[0], stamp)
+        pos = [None if o is None else o.center for o in obs]
+        payload = detections_json(dets, depth.shape[1], depth.shape[0], stamp, pos)
         payload["stamp_ns"] = int(depth_msg.header.stamp.sec) * 10**9 + int(
             depth_msg.header.stamp.nanosec
         )
         self.det_pub.publish(String(data=json.dumps(payload, separators=(",", ":"))))
+
+    def _save_photos(self, dets, obs, width: int, height: int, stamp: float) -> None:
+        """Keep the most confident crop of each small object / person as its photo reference."""
+        for d, o in zip(dets, obs, strict=True):
+            if o is None or d.box is None or o.label not in PHOTO_LABELS:
+                continue
+            if d.confidence < self.photo_min_conf:
+                continue
+            obj = self.sg.store.match(o)
+            if obj is None or d.confidence <= obj.extra.get("photo_conf", 0.0):
+                continue
+            jpeg = self.frames.nearest(stamp)
+            if jpeg is None:
+                continue
+            u0, v0, u1, v1 = d.box
+            box = (u0 / width, v0 / height, (u1 - u0 + 1) / width, (v1 - v0 + 1) / height)
+            path = self.photo_dir / f"{obj.id}.jpg"
+            if crop_jpeg(jpeg, box, path) is not None:
+                obj.extra["photo"], obj.extra["photo_conf"] = str(path), float(d.confidence)
 
     def _update_rooms(self) -> None:
         if self._grid_msg is not None and self._grid_msg is not self._grid_done:

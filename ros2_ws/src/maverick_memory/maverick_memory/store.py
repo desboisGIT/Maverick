@@ -24,6 +24,12 @@ ALIASES = {
     "shelf": "shelves",
     "potted_plant": "plant",
     "armchair": "chair",
+    "bananas": "banana",
+    "loaf": "bread",
+    "bread_loaf": "bread",
+    "human": "person",
+    "man": "person",
+    "woman": "person",
 }
 
 
@@ -112,6 +118,11 @@ class ObjectStore:
                 best, best_d = o, d
         return best
 
+    def match(self, obs: ObjectObservation) -> StoredObject | None:
+        """The stored object an observation of this class belongs to (None: no association)."""
+        obs.label = canonical_label(obs.label)
+        return self._match(obs)
+
     def add(self, obs: ObjectObservation) -> StoredObject | None:
         """Associate one observation; returns the object it updated or created (None if ignored)."""
         c = self.cfg
@@ -169,6 +180,7 @@ class ObjectStore:
                         a.n_full += b.n_full
                         a.first_seen = min(a.first_seen, b.first_seen)
                         a.last_seen = max(a.last_seen, b.last_seen)
+                        a.extra = {**b.extra, **a.extra}
                         del self.objects[b.id]
                         merged += 1
                         again = True

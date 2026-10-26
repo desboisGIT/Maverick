@@ -441,6 +441,7 @@ class SceneGraph:
                 "polygon": [[round(x, 2), round(y, 2)] for x, y in r.polygon],
                 "confidence": round(r.confidence, 3),
                 "visited": r.id in self.visited,
+                **({"secondary": r.secondary} if r.secondary else {}),
             }
             for r in self._list
         ]
