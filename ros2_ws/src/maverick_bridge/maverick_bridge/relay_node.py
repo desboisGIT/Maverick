@@ -18,6 +18,7 @@ import rclpy
 from maverick_interfaces.msg import BridgeStatus, FlightCommand, FlightSetpoint
 from nav_msgs.msg import Odometry
 from px4_msgs.msg import (
+    EstimatorStatusFlags,
     OffboardControlMode,
     TrajectorySetpoint,
     VehicleCommand,
@@ -79,12 +80,22 @@ class TelemetryNode(Node):
             self.create_subscription(
                 msg_type, topic, sink.telemetry_callback(topic), qos_profile_sensor_data
             )
+        self.ev_pos_fused = False  # estimator_status_flags.cs_ev_pos, read by RelayNode
+        self.create_subscription(
+            EstimatorStatusFlags,
+            "/fmu/out/estimator_status_flags",
+            self._on_flags,
+            qos_profile_sensor_data,
+        )
         self.mode_pub = self.create_publisher(
             OffboardControlMode, "/fmu/in/offboard_control_mode", 10
         )
         self.sp_pub = self.create_publisher(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", 10)
         self.cmd_pub = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", 10)
         self.vision_pub = self.create_publisher(VehicleOdometry, VISION_TOPIC, 10)
+
+    def _on_flags(self, msg) -> None:
+        self.ev_pos_fused = bool(msg.cs_ev_pos)
 
 
 class RelayNode(Node):
@@ -225,6 +236,7 @@ class RelayNode(Node):
         msg.vision_forwarded = self.vision.counters.forwarded
         msg.vision_dropped_stale = self.vision.counters.dropped_stale
         msg.vision_dropped_invalid = self.vision.counters.dropped_invalid
+        msg.ev_pos_fused = bool(self.px4 is not None and self.px4.ev_pos_fused)
         self._status_pub.publish(msg)
 
 

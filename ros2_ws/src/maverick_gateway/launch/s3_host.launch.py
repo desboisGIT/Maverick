@@ -17,6 +17,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration as LC
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -28,6 +29,8 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("altitude", default_value="1.2"),
             DeclareLaunchArgument("seed", default_value="0"),
             DeclareLaunchArgument("vo", default_value="true"),
+            # arm only once PX4 fuses the external-vision position (mocap or vo localisation)
+            DeclareLaunchArgument("require_ev", default_value="false"),
             DeclareLaunchArgument("vo_mode", default_value="icp"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
@@ -42,7 +45,13 @@ def generate_launch_description() -> LaunchDescription:
                 executable="flight_client",
                 name="flight_client",
                 condition=IfCondition(LC("flight")),
-                parameters=[{"altitude": 2.0, "hover_seconds": 0.0}],
+                parameters=[
+                    {
+                        "altitude": 2.0,
+                        "hover_seconds": 0.0,
+                        "require_ev": ParameterValue(LC("require_ev"), value_type=bool),
+                    }
+                ],
                 output="screen",
             ),
             Node(

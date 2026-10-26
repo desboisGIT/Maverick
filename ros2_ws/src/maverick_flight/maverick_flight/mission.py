@@ -34,6 +34,7 @@ class Observation:
     nav_state: int | None
     landed: bool | None
     telemetry_age_s: float  # time since any PX4 telemetry arrived; inf before the first
+    ev_fused: bool | None = None  # PX4 fuses the external-vision position; None: unknown
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,13 @@ class MissionConfig:
     command_retry_s: float = 1.0
     offboard_reengage_s: float = 1.0  # not in offboard this long with a live link: re-send OFFBOARD
     link_ok_age_s: float = 1.0
+    # Arm only when PX4's EKF fuses the external-vision position (mocap / VO runs). In the S3 mocap
+    # runs fusion started 0-8 s after take-off in a third of the runs (PX4 clock offset still
+    # settling after the simulator's start-up RTF dip); the flow-only estimate drifted by up to
+    # 0.31 m meanwhile and then jumped. Waits at most `ev_wait_s`, then flies on what it has.
+    require_ev: bool = False
+    ev_wait_s: float = 30.0
+    ev_stable_s: float = 1.5
 
 
 class Phase(Enum):
@@ -96,6 +104,8 @@ class FlightMission:
         self._land_requested = False
         self._fail: str | None = None
         self.armed_ever = False
+        self._ev_since: float | None = None
+        self._ev_gave_up = False
 
     # -- events ------------------------------------------------------------------------------
     def _emit(self, event: str, **fields) -> None:
@@ -220,6 +230,16 @@ class FlightMission:
 
         if self.phase is Phase.PREFLIGHT:
             sp = self._stream(dt, None)
+            if cfg.require_ev and not self._ev_gave_up:
+                if obs.ev_fused:
+                    self._ev_since = t if self._ev_since is None else self._ev_since
+                else:
+                    self._ev_since = None
+                if self._ev_since is None or t - self._ev_since < cfg.ev_stable_s:
+                    if t - self._phase_t0 <= cfg.ev_wait_s:
+                        return Action(sp)
+                    self._ev_gave_up = True  # fly on the flow estimate, say so once
+                    self._emit("ev_not_fused", waited_s=round(t - self._phase_t0, 1))
             if self._streamed >= cfg.min_setpoints:
                 self._enter(Phase.ARMING, t)
                 self._last_cmd_t = t

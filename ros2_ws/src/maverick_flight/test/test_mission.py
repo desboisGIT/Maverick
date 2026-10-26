@@ -191,3 +191,44 @@ def test_climbs_when_the_estimator_origin_has_drifted():
     assert s.m.phase is Phase.HOVER
     assert abs(s.pos[2] - (-4.27)) < 0.25
     assert s.m.gate.origin == (2.1, -0.27, -2.27)
+
+
+def _ev_run(pattern, **cfg):
+    """Commands issued while PX4 reports ev_fused = pattern[k] at tick k (20 Hz, disarmed)."""
+    m = FlightMission(MissionConfig(altitude=1.0, require_ev=True, ev_stable_s=1.0, **cfg))
+    cmds, t = [], 0.0
+    for ev in pattern:
+        t += 0.05
+        cmds += list(m.step(Observation(t, (0.0, 0.0, 0.0), 1, 4, True, 0.0, ev_fused=ev)).commands)
+    return m, cmds
+
+
+def test_require_ev_does_not_arm_without_fusion():
+    m, cmds = _ev_run([False] * 200, ev_wait_s=30.0)
+    assert "arm" not in cmds
+    assert m.phase is Phase.PREFLIGHT
+
+
+def test_require_ev_arms_after_stable_fusion():
+    _, cmds = _ev_run([False] * 100 + [True] * 40, ev_wait_s=30.0)
+    assert "arm" in cmds
+
+
+def test_require_ev_dropout_restarts_the_stability_timer():
+    _, cmds = _ev_run([True] * 15 + [False] + [True] * 15, ev_wait_s=30.0)  # 0.75 s twice
+    assert "arm" not in cmds
+
+
+def test_require_ev_gives_up_after_the_wait_and_says_so_once():
+    m, cmds = _ev_run([False] * 100, ev_wait_s=2.0)
+    assert "arm" in cmds
+    assert [e["event"] for e in m.drain_events()].count("ev_not_fused") == 1
+
+
+def test_without_require_ev_nothing_changes():
+    m = FlightMission(MissionConfig(altitude=1.0))
+    cmds, t = [], 0.0
+    for _ in range(60):
+        t += 0.05
+        cmds += list(m.step(Observation(t, (0.0, 0.0, 0.0), 1, 4, True, 0.0)).commands)
+    assert "arm" in cmds

@@ -15,6 +15,7 @@ case "${MAVERICK_HOST_LAUNCH:-none}" in
         ( set +u; . /maverick/ros2_ws/install/setup.bash \
           && exec ros2 launch maverick_gateway s3_host.launch.py \
             vo:=$([ "${MAVERICK_LOCALISATION:-flow}" = vo ] && echo true || echo false) \
+            require_ev:=$([ "${MAVERICK_LOCALISATION:-flow}" = flow ] && echo false || echo true) \
             ${MAVERICK_LAUNCH_ARGS:-} ) &
         LAUNCH_PID=$!
         echo "[host] started s3 host launch (pid $LAUNCH_PID)"

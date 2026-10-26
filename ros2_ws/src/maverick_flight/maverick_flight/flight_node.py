@@ -74,6 +74,8 @@ class FlightClient(Node):
                 altitude=altitude,
                 hover_seconds=hover_s if hover_s > 0 else None,
                 gap_abort_s=p("gap_abort_s", 5.0).value,
+                require_ev=bool(p("require_ev", False).value),
+                ev_wait_s=float(p("ev_wait_s", 30.0).value),
             ),
             gate,
         )
@@ -82,6 +84,7 @@ class FlightClient(Node):
         self._land: VehicleLandDetected | None = None
         self._last_rx = -1e9
         self._bridge: dict | None = None
+        self._ev_fused: bool | None = None
         self._last_phase_line = ""
 
         q = qos_profile_sensor_data
@@ -128,6 +131,7 @@ class FlightClient(Node):
             "dropped_stale": int(msg.setpoints_dropped_stale),
             "dropped_invalid": int(msg.setpoints_dropped_invalid),
         }
+        self._ev_fused = bool(msg.ev_pos_fused)
 
     def _on_goal(self, msg: String) -> None:
         try:
@@ -159,6 +163,7 @@ class FlightClient(Node):
             nav_state=int(s.nav_state) if s is not None else None,
             landed=bool(ld.landed) if ld is not None else None,
             telemetry_age_s=time.monotonic() - self._last_rx,
+            ev_fused=self._ev_fused,
         )
 
     def _tick(self) -> None:
