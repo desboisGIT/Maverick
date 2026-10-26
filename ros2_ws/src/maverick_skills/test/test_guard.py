@@ -32,9 +32,9 @@ def test_clear_is_ok():
 
 
 def test_obstacle_ahead_slows_then_stops():
-    assert g.evaluate(sectors(b0=0.30), 0.0).action == "slow"
-    assert g.evaluate(sectors(b0=0.30), 0.0).speed_cap == g.cfg.slow_speed
-    assert g.evaluate(sectors(b0=0.19), 0.0).action == "stop"
+    assert g.evaluate(sectors(b0=0.45), 0.0).action == "slow"
+    assert g.evaluate(sectors(b0=0.45), 0.0).speed_cap == g.cfg.slow_speed
+    assert g.evaluate(sectors(b0=0.28), 0.0).action == "stop"
 
 
 def test_obstacle_beside_does_not_stop():
@@ -63,7 +63,7 @@ def test_nudge_between_two_walls_cancels():
 
 
 def test_no_heading_never_stops():
-    assert g.evaluate(sectors(b0=0.19), None).action == "ok"
+    assert g.evaluate(sectors(b0=0.28), None).action == "ok"
 
 
 def test_heading_from_velocity_else_goal():
@@ -115,3 +115,11 @@ def test_second_guard_stop_at_the_same_waypoint_is_a_stall():
     s.follow.set([(1.0, 1.0)], 3.0)  # a different waypoint starts the count again
     s.on_guard(ctx, {"d_fwd": 0.19})
     assert s.guard_n == 1
+
+
+def test_door_frame_passed_at_a_quarter_metre_does_not_stop():
+    # a frame corner 0.25 m to the side and 0.36 m ahead (bearing 35 deg, 0.44 m away)
+    d = g.evaluate(sectors(b45=0.44, bm45=0.44), 0.0)
+    assert d.action in ("ok", "slow")
+    # but an obstacle dead ahead at 0.28 m stops
+    assert g.evaluate(sectors(b0=0.28), 0.0).action == "stop"

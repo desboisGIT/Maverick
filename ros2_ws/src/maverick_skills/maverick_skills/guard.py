@@ -12,7 +12,12 @@ waypoint, an obstacle mapped late, a graze beside a half-mapped box).
   nudge within `nudge_m` in any direction: step away from it (up to `nudge_max_m`), also when
         hovering, where the stationary graze beside furniture happened (S3 tuning seeds 20-59)
 
-All distances are map-space (body centre to the centre of the nearest occupied cell).
+All distances are map-space (body centre to the centre of the nearest occupied cell). The depth
+camera sits 0.07 m ahead of the body centre and does not see closer than 0.15 m, so an obstacle
+straight ahead is invisible below about 0.22 m: the first version (stop at 0.20 m) fired only
+after the contact (tuning seeds 24, 26, 27), hence the larger distances. The stop cone is narrow
+(an obstacle that would be hit, lateral offset below the body radius) so that door frames passed
+at 0.25 m do not stop the drone.
 """
 
 from __future__ import annotations
@@ -25,13 +30,14 @@ XY = tuple[float, float]
 
 @dataclass(frozen=True)
 class GuardConfig:
-    stop_m: float = 0.20
-    slow_m: float = 0.35
-    slow_speed: float = 0.2
-    nudge_m: float = 0.18
-    nudge_target_m: float = 0.25
+    stop_m: float = 0.30
+    stop_fan_rad: float = math.radians(35.0)  # half width of the cone in which `stop_m` applies
+    slow_m: float = 0.50
+    slow_fan_rad: float = math.radians(50.0)
+    slow_speed: float = 0.25
+    nudge_m: float = 0.20
+    nudge_target_m: float = 0.26
     nudge_max_m: float = 0.12
-    fan_rad: float = math.radians(60.0)  # half width of the "in the direction of travel" cone
     min_speed: float = 0.12  # below this the velocity heading is noise; use the goal's heading
     max_age_s: float = 0.8  # a report older than this is ignored (no guard, the skills' margins)
     hold_s: float = 1.2  # how long a stop holds before the skill's goal is sent again
@@ -72,13 +78,19 @@ class ClearanceGuard:
         c = self.cfg
         n = len(sectors)
         d_min = min(sectors)
-        d_fwd = d_min
+        d_fwd = d_slow = d_min
         if heading is not None:
-            half = c.fan_rad + math.pi / n  # a sector counts if any part of it is in the cone
-            fwd = [
-                d for k, d in enumerate(sectors) if abs(_wrap(bearing_of(k, n) - heading)) <= half
-            ]
-            d_fwd = min(fwd) if fwd else d_min
+
+            def cone(fan: float) -> float:
+                half = fan + math.pi / n  # a sector counts if any part of it is in the cone
+                ds = [
+                    d
+                    for k, d in enumerate(sectors)
+                    if abs(_wrap(bearing_of(k, n) - heading)) <= half
+                ]
+                return min(ds) if ds else d_min
+
+            d_fwd, d_slow = cone(c.stop_fan_rad), cone(c.slow_fan_rad)
         if heading is not None and d_fwd < c.stop_m:
             return Decision("stop", d_fwd, d_min, heading)
         if d_min < c.nudge_m:
@@ -95,8 +107,8 @@ class ClearanceGuard:
                 return Decision(
                     "nudge", d_fwd, d_min, heading, away=(ax / norm, ay / norm), step=step
                 )
-        if heading is not None and d_fwd < c.slow_m:
-            return Decision("slow", d_fwd, d_min, heading, speed_cap=c.slow_speed)
+        if heading is not None and d_slow < c.slow_m:
+            return Decision("slow", d_slow, d_min, heading, speed_cap=c.slow_speed)
         return Decision("ok", d_fwd, d_min, heading)
 
 

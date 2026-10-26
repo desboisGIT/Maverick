@@ -96,6 +96,7 @@ class SkillNode(Node):
         self.guard_goal: tuple[float, float, float, float] | None = None  # x, y, yaw, speed
         self.guard_slow_sent = -1e9
         self.guard_slowed = False
+        self.guard_nudges: list[float] = []
         self.guard_pending: tuple[float, float, float, float] | None = None
         self.guard_stats = {"stop": 0, "nudge": 0, "slow": 0}
 
@@ -317,6 +318,11 @@ class SkillNode(Node):
             self._drain_events(s)
             self.get_logger().warn(f"guard stop {info}")
         elif dec.action == "nudge":
+            # a nudge that changes nothing (the drone is wedged or down) is not repeated forever
+            self.guard_nudges = [t for t in self.guard_nudges if now - t < 10.0]
+            if len(self.guard_nudges) >= 4:
+                return
+            self.guard_nudges.append(now)
             self.guard_stats["nudge"] += 1
             self.guard_hold_until = now + 0.8
             ax, ay = dec.away
