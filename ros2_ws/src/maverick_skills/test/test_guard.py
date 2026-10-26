@@ -32,9 +32,20 @@ def test_clear_is_ok():
 
 
 def test_obstacle_ahead_slows_then_stops():
-    assert g.evaluate(sectors(b0=0.45), 0.0).action == "slow"
-    assert g.evaluate(sectors(b0=0.45), 0.0).speed_cap == g.cfg.slow_speed
-    assert g.evaluate(sectors(b0=0.28), 0.0).action == "stop"
+    assert g.evaluate(sectors(b0=0.45), 0.0, 0.3).action == "slow"
+    assert g.evaluate(sectors(b0=0.45), 0.0, 0.3).speed_cap == g.cfg.slow_speed
+    d = g.evaluate(sectors(b0=0.28), 0.0, 0.3)  # closing in at 0.3 m/s
+    assert d.action == "stop"
+    assert abs(d.bearing) < 0.2  # the obstacle's bearing, for the keepout
+
+
+def test_stop_distance_grows_with_speed_and_needs_closing_in():
+    assert g.evaluate(sectors(b0=0.5), 0.0, 0.3).action == "slow"
+    assert g.evaluate(sectors(b0=0.5), 0.0, 0.8).action == "stop"  # 0.30 + 0.35 * 0.8 = 0.58
+    # at rest beside an obstacle 0.25 m ahead the drone may move (slowly); only inside the hard
+    # stop distance is it held whatever its speed
+    assert g.evaluate(sectors(b0=0.25), 0.0, 0.0).action == "slow"
+    assert g.evaluate(sectors(b0=0.19), 0.0, 0.0).action == "stop"
 
 
 def test_obstacle_beside_does_not_stop():
@@ -63,7 +74,7 @@ def test_nudge_between_two_walls_cancels():
 
 
 def test_no_heading_never_stops():
-    assert g.evaluate(sectors(b0=0.28), None).action == "ok"
+    assert g.evaluate(sectors(b0=0.28), None, 0.3).action == "ok"
 
 
 def test_heading_from_velocity_else_goal():
@@ -122,4 +133,4 @@ def test_door_frame_passed_at_a_quarter_metre_does_not_stop():
     d = g.evaluate(sectors(b45=0.44, bm45=0.44), 0.0)
     assert d.action in ("ok", "slow")
     # but an obstacle dead ahead at 0.28 m stops
-    assert g.evaluate(sectors(b0=0.28), 0.0).action == "stop"
+    assert g.evaluate(sectors(b0=0.28), 0.0, 0.3).action == "stop"

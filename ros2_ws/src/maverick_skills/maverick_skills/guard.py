@@ -38,6 +38,16 @@ class GuardConfig:
     nudge_m: float = 0.20
     nudge_target_m: float = 0.26
     nudge_max_m: float = 0.12
+    # braking: the drone coasts about 0.3 m from 0.8 m/s (setpoint stepped back, attitude lag), so
+    # both distances grow with the speed towards the obstacle; a stop needs the drone to be closing
+    # in (a drone at rest next to an obstacle must be free to move away: a hard stop there froze
+    # tuning seed 26 beside a wall for 15 s), except inside `hard_stop_m`
+    k_stop_s: float = 0.35
+    k_slow_s: float = 0.6
+    min_closing_mps: float = 0.08
+    hard_stop_m: float = 0.20
+    keepout_m: float = 0.20  # radius of the keepout the skill planner gets around a stop's obstacle
+    keepout_s: float = 40.0
     min_speed: float = 0.12  # below this the velocity heading is noise; use the goal's heading
     max_age_s: float = 0.8  # a report older than this is ignored (no guard, the skills' margins)
     hold_s: float = 1.2  # how long a stop holds before the skill's goal is sent again
@@ -52,6 +62,7 @@ class Decision:
     speed_cap: float | None = None
     away: XY | None = None  # unit vector away from the obstacle (nudge)
     step: float = 0.0  # nudge distance, m
+    bearing: float | None = None  # bearing of the nearest obstacle in the stop cone (stop)
 
 
 def _wrap(a: float) -> float:
@@ -74,25 +85,30 @@ class ClearanceGuard:
             return math.atan2(to_goal[1], to_goal[0])
         return None
 
-    def evaluate(self, sectors: list[float], heading: float | None) -> Decision:
+    def evaluate(
+        self, sectors: list[float], heading: float | None, v_toward: float = 0.0
+    ) -> Decision:
+        """`v_toward`: speed along `heading`, m/s (the drone's own, from poses)."""
         c = self.cfg
         n = len(sectors)
         d_min = min(sectors)
         d_fwd = d_slow = d_min
+        bearing = None
+        v = max(v_toward, 0.0)
         if heading is not None:
 
-            def cone(fan: float) -> float:
+            def cone(fan: float) -> tuple[float, float | None]:
                 half = fan + math.pi / n  # a sector counts if any part of it is in the cone
-                ds = [
-                    d
-                    for k, d in enumerate(sectors)
-                    if abs(_wrap(bearing_of(k, n) - heading)) <= half
-                ]
-                return min(ds) if ds else d_min
+                ks = [k for k in range(n) if abs(_wrap(bearing_of(k, n) - heading)) <= half]
+                if not ks:
+                    return d_min, None
+                k = min(ks, key=lambda k: sectors[k])
+                return sectors[k], bearing_of(k, n)
 
-            d_fwd, d_slow = cone(c.stop_fan_rad), cone(c.slow_fan_rad)
-        if heading is not None and d_fwd < c.stop_m:
-            return Decision("stop", d_fwd, d_min, heading)
+            (d_fwd, bearing), (d_slow, _) = cone(c.stop_fan_rad), cone(c.slow_fan_rad)
+            closing = v >= c.min_closing_mps
+            if d_fwd < c.hard_stop_m or (d_fwd < c.stop_m + c.k_stop_s * v and closing):
+                return Decision("stop", d_fwd, d_min, heading, bearing=bearing)
         if d_min < c.nudge_m:
             ax = ay = 0.0
             for k, d in enumerate(sectors):
@@ -107,7 +123,7 @@ class ClearanceGuard:
                 return Decision(
                     "nudge", d_fwd, d_min, heading, away=(ax / norm, ay / norm), step=step
                 )
-        if heading is not None and d_slow < c.slow_m:
+        if heading is not None and d_slow < c.slow_m + c.k_slow_s * v:
             return Decision("slow", d_slow, d_min, heading, speed_cap=c.slow_speed)
         return Decision("ok", d_fwd, d_min, heading)
 
