@@ -47,3 +47,13 @@ def format_answer(ans: dict) -> str:
     if kind == "room_of":
         return f"in room {ans.get('room_id')} ({ans.get('room_type')})"
     return "ok"
+
+
+def skill_result_text(progress: dict) -> str:
+    """What the model reads as a skill's result: the message plus the id of a found object."""
+    msg = str(progress.get("message", ""))
+    res = progress.get("result")
+    if isinstance(res, dict) and res.get("found") and res.get("object_id"):
+        extra = f"object_id {res['object_id']}" + ("" if res.get("photo") else ", no photo")
+        msg = f"{msg} ({extra})"
+    return msg

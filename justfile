@@ -93,6 +93,11 @@ test-s3 *args:
 test-s4 *args:
     PYTHONPATH=sim/referee python3 -m referee.s4 {{args}}
 
+# S4c: h2_text, the first end-to-end mission by text through the agent (backend scripted or
+# deepseek, spend cap), tuning seeds only: `just test-s4c --seeds 10-19 --stacks 3 --backend scripted`
+test-s4c *args:
+    PYTHONPATH=sim/referee python3 -m referee.s4c {{args}}
+
 # Generate random apartment world(s) into sim/worlds/generated/, e.g. `just worldgen 7` or
 # `just worldgen 7 --count 5 --no-ceiling`
 worldgen seed="7" *args:

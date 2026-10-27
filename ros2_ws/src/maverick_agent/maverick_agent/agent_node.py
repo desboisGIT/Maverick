@@ -12,9 +12,16 @@ Topics
   out /maverick/agent/event     std_msgs/String JSON {"type": "transcript"|"agent_step",
                                 "t": ..., "data": {...}} (gateway envelope; the gateway forwards)
 
+Also in  /maverick/camera/rgb/compressed (latest frame, for send_photo "current_view")
+Logs (JSON lines, for the referee and for debugging): agent.event_log (every event, photo bytes
+replaced by their length; includes `mission_end` with calls, seconds, tools, usage) and
+agent.calls_log (one line per model call: latency, tokens, estimated EUR, running total).
+
 Parameters: agent.backend (deepseek|claude|scripted, default deepseek; falls back to scripted
 with a warning when the backend's API key is not in the environment), agent.model (empty:
-backend default), agent.effort, agent.max_tokens, agent.cassette_path.
+backend default), agent.effort, agent.max_tokens, agent.cassette_path, agent.cap_eur (stop calling
+the model after this estimated spend, 0 = no cap), agent.tts (none), agent.event_log,
+agent.calls_log.
 """
 
 from __future__ import annotations
@@ -29,13 +36,17 @@ import time
 import rclpy
 from maverick_mapping import topics as T
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
 from .backends import KEY_ENV, AgentConfig, make_backend
 from .loop import AgentLoop, SkillResult
-from .memory_bridge import format_answer, question_to_query
-from .tools import skill_request
+from .memory_bridge import format_answer, question_to_query, skill_result_text
+from .metering import MeteredBackend
+from .photos import photo_attachment, read_photo, strip_attachment_data
+from .tools import PHOTO_CURRENT_VIEW, skill_request
+from .tts import make_tts
 
 OPERATOR_TEXT = "/maverick/operator/text"
 AGENT_SAY = "/maverick/agent/say"
@@ -64,6 +75,8 @@ class RosExecutive:
         self.rooms: list = []
         self.objects: list = []
         self.progress: dict = {}
+        self.photos: dict[str, dict] = {}  # object_id -> {path, label}, from search results
+        self.last_frame: bytes | None = None
 
     def start_skill(self, name: str, args: dict) -> None:
         while not self._result.empty():
@@ -104,8 +117,14 @@ class RosExecutive:
         if state == "cancelled" and self._ignore_cancel:
             self._ignore_cancel = False
             return
+        res = d.get("result")
+        if isinstance(res, dict) and res.get("object_id") and res.get("photo"):
+            self.photos[str(res["object_id"])] = {
+                "path": str(res["photo"]),
+                "label": str(res.get("object", "")),
+            }
         self._active = False
-        self._result.put(SkillResult(state, str(d.get("message", ""))))
+        self._result.put(SkillResult(state, skill_result_text(d)))
 
     def memory_query(self, question: str) -> str:
         self._qn += 1
@@ -129,14 +148,35 @@ class RosExecutive:
 
     def say(self, text: str) -> None:
         self.n.say_pub.publish(String(data=json.dumps({"text": text})))
+        try:
+            self.n.tts.speak(text)
+        except Exception:
+            self.n.get_logger().warn("tts failed", throttle_duration_sec=5.0)
 
     def send_photo(self, target: str, caption: str) -> str:
-        # The photo itself is attached by the gateway from the latest camera frame (not wired yet).
+        """A transcript message with the photo attached (crop memory saved, or the current view)."""
+        if target == PHOTO_CURRENT_VIEW:
+            if self.last_frame is None:
+                raise RuntimeError("no camera frame yet")
+            att = photo_attachment(self.last_frame, caption)
+        else:
+            ref = self.photos.get(target)
+            jpeg = read_photo(ref["path"]) if ref else None
+            if ref is None or jpeg is None:
+                raise RuntimeError(
+                    f"no photo for {target}: use the object_id from a successful search result"
+                )
+            att = photo_attachment(jpeg, caption, target, ref["label"])
         self.n.event(
             "transcript",
-            {"id": f"photo-{time.time():.0f}", "role": "maverick", "text": f"[photo: {caption}]"},
+            {
+                "id": f"photo-{time.time_ns()}",
+                "role": "maverick",
+                "text": caption,
+                "attachments": [att],
+            },
         )
-        return f"photo of {target} queued"
+        return f"photo of {target} sent"
 
     def state_block(self) -> str:
         rooms = ", ".join(f"{r.get('type')}({r.get('id')})" for r in self.rooms) or "none yet"
@@ -160,6 +200,10 @@ class AgentNode(Node):
             max_tokens=int(p("agent.max_tokens", 16000).value),
             cassette_path=str(p("agent.cassette_path", "").value),
         )
+        cap_eur = float(p("agent.cap_eur", 0.0).value)
+        self.event_log = str(p("agent.event_log", "/tmp/agent_events.jsonl").value)
+        calls_log = str(p("agent.calls_log", "/tmp/agent_calls.jsonl").value)
+        self.tts = make_tts(str(p("agent.tts", "none").value))
         key_env = KEY_ENV.get(cfg.backend)
         if key_env and not os.environ.get(key_env):
             self.get_logger().warning(
@@ -171,12 +215,16 @@ class AgentNode(Node):
         self.say_pub = self.create_publisher(String, AGENT_SAY, RELIABLE)
         self.event_pub = self.create_publisher(String, AGENT_EVENT, RELIABLE)
         self.ex = RosExecutive(self)
-        self.loop = AgentLoop(make_backend(cfg), self.ex, emit=self.event)
+        self.backend = MeteredBackend(make_backend(cfg), cfg.backend, cap_eur, calls_log)
+        self.loop = AgentLoop(self.backend, self.ex, emit=self.event)
         self.create_subscription(String, OPERATOR_TEXT, self._on_text, RELIABLE)
         self.create_subscription(String, T.SKILL_PROGRESS, self._on_progress, LATCHED)
         self.create_subscription(String, T.MEM_ANSWER, self._on_answer, RELIABLE)
         self.create_subscription(String, T.MEM_ROOMS, lambda m: self._set("rooms", m), LATCHED)
         self.create_subscription(String, T.MEM_OBJECTS, lambda m: self._set("objects", m), LATCHED)
+        self.create_subscription(
+            CompressedImage, T.CAM_RGB, self._on_frame, qos_profile_sensor_data
+        )
         self._wake = threading.Event()
         threading.Thread(target=self._worker, daemon=True).start()
         self.get_logger().info(f"agent_node up (backend {cfg.backend})")
@@ -184,6 +232,15 @@ class AgentNode(Node):
     def event(self, typ: str, data: dict) -> None:
         env = {"type": typ, "t": time.time(), "data": data}
         self.event_pub.publish(String(data=json.dumps(env)))
+        try:
+            logged = strip_attachment_data(data) if typ == "transcript" else data
+            with open(self.event_log, "a") as f:
+                f.write(json.dumps({"type": typ, "t": env["t"], "data": logged}) + "\n")
+        except OSError:
+            pass
+
+    def _on_frame(self, msg: CompressedImage) -> None:
+        self.ex.last_frame = bytes(msg.data)
 
     def _set(self, attr: str, msg: String) -> None:
         try:

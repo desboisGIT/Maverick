@@ -146,8 +146,20 @@ class AgentLoop:
         self._plan_n += 1
         self._goal, self._plan, self._spoke = text, [], False
         self._publish_plan()
+        t0 = self.clock()
         res = self._run(start)
         self._finish_plan(res)
+        self._emit(
+            "mission_end",  # for logs and the referee; the gateway forwards only known types
+            {
+                "plan_id": f"plan-{self._plan_n}",
+                "ended": res.ended,
+                "calls": res.calls,
+                "seconds": round(self.clock() - t0, 2),
+                "tools": [[n, a, e] for n, a, e in res.tools],
+                "usage": res.usage,
+            },
+        )
         return res
 
     def _run(self, start: int) -> MissionResult:

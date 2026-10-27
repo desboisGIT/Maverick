@@ -28,6 +28,32 @@ def _calls(step):
     return step if isinstance(step, list) else [step]
 
 
+def _result_texts(messages: list[dict], after: int) -> list[str]:
+    """Text of every tool_result in the messages after index `after` (this mission's results)."""
+    out = []
+    for m in messages[after + 1 :]:
+        if m["role"] == "user" and not isinstance(m["content"], str):
+            for b in m["content"]:
+                if b.get("type") == "tool_result":
+                    c = b.get("content", "")
+                    out.append(c if isinstance(c, str) else json.dumps(c))
+    return out
+
+
+def h2_report(results: list[str]):
+    """Step after search + come_to: the spoken answer (and the photo when found)."""
+    found = bool(results) and results[0].lower().startswith("found")
+    if not found:
+        ok = bool(results) and results[0].lower().startswith("not found")
+        text = "No, I looked and there are none." if ok else "Sorry, I could not finish checking."
+        return ("say", {"text": text})
+    m = re.search(r"object_id (\S+?)[,)]", results[0])
+    calls = [("say", {"text": "Yes, I found them. Here is a photo."})]
+    if m:
+        calls.append(("send_photo", {"target": m.group(1), "caption": "found it"}))
+    return calls
+
+
 def _fill(v, groups: tuple[str, ...]):
     if isinstance(v, str):
         try:
@@ -38,6 +64,15 @@ def _fill(v, groups: tuple[str, ...]):
 
 
 DEFAULT_RULES = [
+    Rule(
+        r"check (?:in |on )?(?:the )?(\w+?) (?:if|whether) there (?:are|is) (?:any |some |a |an )?"
+        r"(\w+?)s?\b",
+        [
+            ("search", {"object": "{2}", "region": "{1}", "budget_s": 120}),
+            ("come_to", {"person": "operator"}),
+            h2_report,
+        ],
+    ),
     Rule(
         r"check (?:the )?(\w+?) for (?:some |a |an )?(\w+).*(?:come back|return)",
         [
@@ -62,26 +97,26 @@ class ScriptedBackend:
         self.rules = rules if rules is not None else DEFAULT_RULES
 
     @staticmethod
-    def _utterance(messages: list[dict]) -> tuple[str, int]:
-        """The latest user text and how many assistant turns followed it."""
+    def _utterance(messages: list[dict]) -> tuple[str, int, int]:
+        """The latest user text, how many assistant turns followed it, and its index."""
         for i in range(len(messages) - 1, -1, -1):
             m = messages[i]
             if m["role"] != "user":
                 continue
             c = m["content"]
             if isinstance(c, str):
-                return c, sum(1 for x in messages[i + 1 :] if x["role"] == "assistant")
+                return c, sum(1 for x in messages[i + 1 :] if x["role"] == "assistant"), i
             if not any(b.get("type") == "tool_result" for b in c):
                 text = " ".join(
                     b["text"]
                     for b in c
                     if b.get("type") == "text" and not b["text"].startswith("<state>")
                 )
-                return text, sum(1 for x in messages[i + 1 :] if x["role"] == "assistant")
-        return "", 0
+                return text, sum(1 for x in messages[i + 1 :] if x["role"] == "assistant"), i
+        return "", 0, -1
 
     def create(self, system: str, tools: list[dict], messages: list[dict]) -> Response:
-        text, turn = self._utterance(messages)
+        text, turn, at = self._utterance(messages)
         for rule in self.rules:
             m = re.search(rule.pattern, text, re.IGNORECASE)
             if m is None:
@@ -90,7 +125,10 @@ class ScriptedBackend:
                 content = [{"type": "text", "text": rule.final_text}] if rule.final_text else []
                 return Response(content, "end_turn")
             blocks = []
-            for j, (name, args) in enumerate(_calls(rule.steps[turn])):
+            step = rule.steps[turn]
+            if callable(step):
+                step = step(_result_texts(messages, at))
+            for j, (name, args) in enumerate(_calls(step)):
                 blocks.append(
                     {
                         "type": "tool_use",

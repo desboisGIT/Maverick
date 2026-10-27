@@ -143,6 +143,8 @@ export interface PhotoAttachment {
   data: string; // base64
   caption?: string;
   object_id?: string;
+  /** Class the photo claims to show (agent photos), e.g. "banana". */
+  label?: string;
 }
 export type TranscriptRole = "user" | "maverick" | "system";
 /** A chat message. A message with the same `id` replaces the earlier one (partial speech to final). */

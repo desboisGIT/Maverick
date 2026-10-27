@@ -8,16 +8,19 @@ LAUNCH_PID=""
 trap 'kill -TERM "$ZENOH_PID" $LAUNCH_PID 2>/dev/null; exit 0' TERM INT
 
 # Optional host software (MAVERICK_HOST_LAUNCH): "none" (default; the S1 failsafe suite
-# starts its own flight client) or "s3" (mapping, memory, skills, gateway, flight client).
+# starts its own flight client), "s3" (mapping, memory, skills, gateway, flight client) or "s4"
+# (s3 plus agent_node; the agent backend comes from MAVERICK_LAUNCH_ARGS, e.g.
+# "agent_backend:=scripted agent_cap_eur:=0.1", default deepseek).
 # Needs the workspace built first (`just ws-build`).
 case "${MAVERICK_HOST_LAUNCH:-none}" in
-    s3)
+    s3|s4)
         ( set +u; . /maverick/ros2_ws/install/setup.bash \
           && exec ros2 launch maverick_gateway s3_host.launch.py \
             vo:=$([ "${MAVERICK_LOCALISATION:-flow}" = vo ] && echo true || echo false) \
+            agent:=$([ "${MAVERICK_HOST_LAUNCH}" = s4 ] && echo true || echo false) \
             ${MAVERICK_LAUNCH_ARGS:-} ) &
         LAUNCH_PID=$!
-        echo "[host] started s3 host launch (pid $LAUNCH_PID)"
+        echo "[host] started ${MAVERICK_HOST_LAUNCH} host launch (pid $LAUNCH_PID)"
         ;;
     none) ;;
     *) echo "[host] unknown MAVERICK_HOST_LAUNCH=${MAVERICK_HOST_LAUNCH}" >&2 ;;
