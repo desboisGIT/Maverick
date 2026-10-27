@@ -161,6 +161,9 @@ def attribute_layers(
             add("agent decision")  # never searched
         elif not layers:
             add("agent decision")  # skills agreed with the truth but the agent said otherwise
+    sent_photo = any(lbl.startswith("Send photo") for lbl, _, _ in details)
+    if present and search_found and not checks.get("photo", True) and not sent_photo:
+        add("agent decision")  # found it but never sent the photo
     if not checks.get("time", True) and not layers:
         add("skill failure")
     return layers

@@ -138,3 +138,12 @@ def test_summary_counts_layers_and_cost():
     assert s["scored"] == 2 and s["passed"] == 1 and s["skipped"] == [3] and s["errors"] == [4]
     assert s["failures_by_layer"] == {"perception": 1} and s["cost_eur"] == 0.03
     assert s["model_calls"] == 7
+
+
+def test_found_but_no_photo_sent_is_an_agent_failure_even_with_flight_issues():
+    found = {"type": "agent_step", "t": 152, "data": {"steps": [
+        {"id": "a", "label": "Search for banana", "status": "done",
+         "detail": "found the banana in the kitchen (object_id obj_1)"}]}}  # fmt: skip
+    events = [ev(100, "user", "go"), ev(150, "maverick", "Yes, there are bananas."), found]
+    v = run(events=events, end=1.03, mn=0.96)
+    assert not v.checks["photo"] and set(v.layers) == {"flight/collision", "agent decision"}
