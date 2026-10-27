@@ -115,9 +115,8 @@ def echo_list(stack: Stack, topic: str) -> list[dict]:
 
 
 def publish_operator_text(stack: Stack, text: str) -> None:
-    payload = shlex.quote(
-        "{data: " + shlex.quote(json.dumps({"text": text, "speaker": "operator"})) + "}"
-    )
+    inner = json.dumps({"text": text, "speaker": "operator"})
+    payload = shlex.quote("{data: " + json.dumps(inner) + "}")  # YAML double-quoted string
     r = stack.exec(
         "host",
         f"ros2 topic pub --once -w 1 /maverick/operator/text std_msgs/msg/String {payload}",

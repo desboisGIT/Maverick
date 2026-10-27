@@ -97,6 +97,20 @@ def order_rooms(rooms: list[dict], label: str, start: XY | None, region: str | N
     return sorted(rooms, key=key)
 
 
+def clear_goal(goal: XY, people: list, free: Callable[[XY], bool], min_d: float) -> XY:
+    """`goal`, or the nearest free point (within 2 m, 0.25 m steps, 16 directions) that is at
+    least `min_d` from every person, so a room goal next to the operator is not refused."""
+    if all(math.dist(goal, p) >= min_d for p in people):
+        return goal
+    for k in range(1, 9):
+        for n in range(16):
+            a = 2 * math.pi * n / 16
+            c = (goal[0] + 0.25 * k * math.cos(a), goal[1] + 0.25 * k * math.sin(a))
+            if all(math.dist(c, p) >= min_d for p in people) and free(c):
+                return c
+    return goal
+
+
 class SearchSkill(CompoundSkill):
     skill = "search"
 
@@ -194,7 +208,12 @@ class SearchSkill(CompoundSkill):
         self.room = self.rooms[self.room_i]
         self.views, self.view_phase = [], 0
         self.state = "go"
-        self.start_leg(ctx, tuple(self.room["goal"]), room_name(self.room["type"]), 0.3)
+        goal = tuple(self.room["goal"])
+        if ctx.people and ctx.grid is not None:
+            goal = clear_goal(
+                goal, ctx.people, free_checker(ctx, self.cfg), self.cfg.search_person_avoid_m
+            )
+        self.start_leg(ctx, goal, room_name(self.room["type"]), 0.3)
         self.ev(ctx, "room", id=self.room["id"], type=self.room["type"], goal=self.room["goal"])
         return True
 

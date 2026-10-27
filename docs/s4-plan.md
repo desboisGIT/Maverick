@@ -110,3 +110,17 @@ First dev run (seed 10) with stand-off 1.5 m ended 1.59 m away, so the default b
 - [F] Perception is the oracle segmentation detector with noise; a real detector will see bananas far worse (a banana is 6-40 pixels at 160x120).
 - [NV] Person position is the visible-surface box centre (about 0.1 m bias); 3 of 10 seeds had no person so come_to ran on 7.
 - [NV] One run per seed; no run-to-run noise measured. Held-out seeds untouched.
+
+## 9. S4c built: typed missions end to end (branch `worktree-agent-ab5ad311f02d54cac`; with mocap, tuning seeds only, not exit results)
+
+**What exists** [F]
+- Wiring: host launch `s4` (`MAVERICK_HOST_LAUNCH=s4`) is the s3 launch plus `agent_node`, and the gateway in agent mode. Console text input -> gateway `text_command` -> `/maverick/operator/text` -> agent -> executive/skills; the agent's `transcript` (user echo, "On it.", spoken lines, photo cards) and `agent_step` events go to the console through the gateway. `send_photo(object_id)` attaches the crop memory saved for that object (the id comes from the search result text, "object_id obj_7"); `current_view` sends the latest camera frame. Backend and cap come from `MAVERICK_LAUNCH_ARGS` (`agent_backend:=scripted agent_cap_eur:=0.1`; default `deepseek`, falls back to scripted without a key).
+- Logs in the host container: `/tmp/agent_events.jsonl` (every event, `mission_end` with calls, seconds, tools), `/tmp/agent_calls.jsonl` (latency, tokens, estimated EUR per model call, running total; `agent.cap_eur` stops the model calls).
+- TTS: `maverick_agent/tts.py` interface with a null backend (default). Kokoro is a TODO (dependency not in the image; nothing in H2 by text needs sound).
+- Referee `h2_text` (`referee/s4c.py`, verdicts in `s4c_verdicts.py`, collisions in the tools container `s4c_tools.py`): per seed, explore (300 s) and `come_to` the mannequin as setup, then at t0 the referee publishes "Maverick, we're sitting down. Can you go check in the kitchen if there are bananas for us, and come back and tell us?". Checks: spoken answer yes/no (rule based) equals truth; photo sent and showing a banana (object id resolves in memory to a banana within 0.3 m of the real one) when present, no photo when absent; ends within 1.5 m of the operator, never under 1.0 m; 0 collisions; mission over within 240 s of the command. Failures are attributed to agent decision, executive rejection, skill failure, perception, flight/collision. Seeds with no mannequin are skipped.
+
+**Run it live** (owner)
+1. `just ws-build` (once, and after code changes). Keys: `docker/.env.secrets` (DeepSeek; without it the agent is scripted).
+2. `just live-s4 --seed 12` starts stack 0 with apartment 12, DeepSeek agent (estimated spend cap EUR 0.50), and prints the URLs. `--stack 3` uses stack 3 instead (gateway port 8765 + stack index); `--backend scripted` needs no key. `just down` stops it (`MAVERICK_STACK=3 just down` for stack 3).
+3. Console: start the node image as in `console/README.md` (`docker run ... node:22 npx vite --host 0.0.0.0 --port 5173`, without the mock), open `http://localhost:5173/?gateway=ws://localhost:8765` (port 8768 for stack 3).
+4. The drone takes off alone. Type "explore the flat" and wait for the map, then "come to me", then the H2 request above. The conversation, the plan steps and the photo card appear in the console. "stop" / "land" bypass the model.
