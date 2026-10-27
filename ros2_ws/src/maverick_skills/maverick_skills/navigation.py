@@ -11,6 +11,7 @@ import dataclasses
 import math
 
 from maverick_mapping.planner import PlanningGrid
+from maverick_mapping.voxel_map import OCCUPIED
 
 from .skills import XY, Ctx, GotoRoomSkill, Out, SkillConfig, _Base
 
@@ -75,6 +76,24 @@ class CompoundSkill(_Base):
     def finish_with(self, state: str, message: str, ctx: Ctx, result: dict | None = None) -> Out:
         self.result_data = result
         return self.finish(state, message, ctx, hold=True)
+
+
+def stamp_people(grid_t, people, radius_m: float):
+    """The planner's grid with a disc of `radius_m` marked occupied around every person, so paths
+    keep clear of them (the planner itself knows nothing about people). `grid_t` is (grid, res,
+    origin); returns a new tuple, the input is not modified."""
+    if grid_t is None or not people or radius_m <= 0:
+        return grid_t
+    grid, res, org = grid_t
+    g = grid.copy()
+    r = int(math.ceil(radius_m / res))
+    for px, py in people:
+        ci, cj = int(round((px - org[0]) / res - 0.5)), int(round((py - org[1]) / res - 0.5))
+        for i in range(max(0, ci - r), min(g.shape[0], ci + r + 1)):
+            for j in range(max(0, cj - r), min(g.shape[1], cj + r + 1)):
+                if math.hypot((i - ci) * res, (j - cj) * res) <= radius_m:
+                    g[i, j] = OCCUPIED
+    return g, res, org
 
 
 def free_checker(ctx: Ctx, cfg: SkillConfig):

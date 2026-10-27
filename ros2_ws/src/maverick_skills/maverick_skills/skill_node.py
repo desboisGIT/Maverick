@@ -45,6 +45,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profi
 from std_msgs.msg import String
 
 from .executive import Executive, WorldView
+from .navigation import stamp_people
 from .skills import Ctx, Out, SkillConfig, goal_message, make_skill
 
 LATCHED = QoSProfile(
@@ -237,6 +238,8 @@ class SkillNode(Node):
             return
         ctx.frames, self.frames = self.frames, []
         ctx.people = list(self.people)
+        if s.skill in ("goto", "search", "return"):  # come_to must get close to the person
+            ctx.grid = stamp_people(ctx.grid, self.people, self.cfg.person_clear_m)
         out = s.step(ctx)
         if out.goal is not None and s.skill in ("goto", "search", "come_to", "return"):
             why = self.executive.goal_violation(out.goal[:2], self._view())

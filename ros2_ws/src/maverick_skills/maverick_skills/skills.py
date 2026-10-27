@@ -64,6 +64,7 @@ class SkillConfig:
     search_look_s: float = 1.2  # pause at each yaw of a surface viewpoint
     search_standoff: float = 1.3  # viewpoint distance from a surface's face, m
     search_person_avoid_m: float = 1.2  # no search viewpoint closer than this to a person
+    person_clear_m: float = 1.0  # planner paths (goto, search, return) keep this far from people
     min_person_m: float = 1.0  # never closer than this to a person (executive guard)
     come_to_tolerance: float = 0.2
     return_tolerance: float = 0.25
