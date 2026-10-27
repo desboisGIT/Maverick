@@ -124,3 +124,27 @@ First dev run (seed 10) with stand-off 1.5 m ended 1.59 m away, so the default b
 2. `just live-s4 --seed 12` starts stack 0 with apartment 12, DeepSeek agent (estimated spend cap EUR 0.50), and prints the URLs. `--stack 3` uses stack 3 instead (gateway port 8765 + stack index); `--backend scripted` needs no key. `just down` stops it (`MAVERICK_STACK=3 just down` for stack 3).
 3. Console: start the node image as in `console/README.md` (`docker run ... node:22 npx vite --host 0.0.0.0 --port 5173`, without the mock), open `http://localhost:5173/?gateway=ws://localhost:8765` (port 8768 for stack 3).
 4. The drone takes off alone. Type "explore the flat" and wait for the map, then "come to me", then the H2 request above. The conversation, the plan steps and the photo card appear in the console. "stop" / "land" bypass the model.
+
+**Results**, tuning seeds 10-19, small drone, mocap, stack 3, one run per seed, final code (explore 300 s then `come_to` as setup) [F]. Seeds 13, 14, 18 have no mannequin (skipped). Setup failures (the pre-command `come_to` did not succeed) are not scored but listed: they are the same skill that the mission ends with.
+
+| Backend | h2_text passes (scored) | Setup failures | Failures |
+|---|---|---|---|
+| `scripted` (final code) | 2/4 (seeds 11, 17 pass) | 15, 16, 19 | 10: 2 collisions, ended 2.17 m away; 12: came within 0.87 m of the operator |
+| `deepseek` (`deepseek-flash`) | 3/5 (seeds 10, 11, 16 pass) | 15, 17 | 12: banana missed (not found) plus 1 collision; 19: agent found it but never sent the photo, and ended 1.03 m away (0.96 m minimum) |
+
+Counting every seed with a mannequin as a run, DeepSeek passed 3/7 and scripted 2/7; the target (8/10) is **not met**. [F]
+
+**Failures by layer** (DeepSeek run, 7 seeds with a mannequin; layers can overlap): setup `come_to` skill 2 (seeds 15 "no free place near the person", 17 "goal 0.53 m from a person"), perception/search 1 (seed 12, banana not found), flight/collision 2 (seeds 12, 19), agent decision 1 (seed 19: no photo sent), executive rejection 0 in the final DeepSeek run (the 1.0 m guard did refuse the first scripted run on seeds 12 and 17 before the fixes below). The DeepSeek agent itself was correct in 5/5 scored missions on what it did with the tool results: answers always matched what the search returned, it called `come_to` every time, and it retried a failed `come_to` once (seed 12). Its one real miss is the photo on seed 19.
+
+**Latency and cost** [F]: DeepSeek model calls 24 over 5 scored missions (about 5 per mission), 1.16 s p50 and 1.58 s p95 per call; mission time from the command to the end of the mission 57.6 s on average (scripted 76 s; dominated by the flight); "On it." goes out in under 1 s. Estimated spend EUR 0.0041 for the whole 10-seed DeepSeek run (about EUR 0.0008 per mission), well under the EUR 0.30 cap (ledger `runs/s4c-spend.json`).
+
+**Fixes made while running** (S4b skill layer; planner and explore untouched): a search room goal closer than 1.2 m to a person is moved to the nearest free point (it was refused by the 1.0 m guard on seeds 12 and 17); goto/search/return plan with a 1.15 m disc around each person stamped on the planner grid (`stamp_people`), so paths no longer graze the operator (seed 12 and 19 min distance 0.59-0.79 m before, 0.87-0.98 m after); the `come_to` default stand-off went from 1.35 m to 1.25 m (a run ended 1.525 m away). Run-to-run variance is large: seed 10 passed with scripted before and failed (2 collisions) after, and `come_to` succeeded or failed on seeds 15, 16, 17, 19 between runs, so single runs per seed say little [F].
+
+**Verified** [F]: the live path (console websocket on stack 3 port 8768 -> gateway -> `/maverick/operator/text` -> agent -> executive) shows the user message, "On it." and the plan step on the websocket (`just live-s4 --stack 3 --backend scripted`); the photo card is checked in the h2_text runs through the events log (attachment with object id and label), not yet by eye in the browser [NV].
+
+**Open issues**
+- The 8/10 target is not met; the limit is flight and skills (`come_to` ring/stand-off accuracy at 1.0-1.5 m, paths near the operator, missed bananas), not the agent. The next fix is a person-aware planner (the explore agent owns the planner) and a `come_to` that finishes with a closed-loop approach to 1.25 m.
+- The referee's 1.0 m and 1.5 m bounds use ground truth, the guard uses the drone's estimate of the person (0.1 m bias) [NV].
+- DeepSeek sent the photo before flying back (seeds 10, 11) and skipped it once (19): the prompt asks for the photo only when found, not when to send it. A stricter prompt or a `report` skill would remove this.
+- TTS is a null backend (Kokoro TODO); "land" typed in the console lands through the gateway, not through the agent.
+- No held-out seeds were used.
