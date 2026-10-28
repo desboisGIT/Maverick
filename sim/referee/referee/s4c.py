@@ -326,7 +326,9 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 rec = run_one(stacks[sid], seed, out, i, args)
             except Exception as exc:  # noqa: BLE001 - a broken run must not end the suite
-                rec = {"verdict": "error", "reason": f"{type(exc).__name__}: {exc}", "layers": []}
+                why = f"{type(exc).__name__}: {exc}"
+                layer = "setup skill failure" if "setup failed" in why else "infrastructure"
+                rec = {"verdict": "error", "reason": why, "layers": [layer]}
             if args.backend != "scripted":
                 total = ledger_add(args.ledger, rec.get("cost_eur", 0.0), f"seed {seed}")
                 print(f"  cumulative spend EUR {total:.4f} (cap {args.cap_eur})", flush=True)

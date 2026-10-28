@@ -222,7 +222,7 @@ def test_extras_do_not_change_the_layout_and_are_deterministic():
 
 def test_small_objects_and_people_statistics():
     present = {"banana": 0, "bread": 0}
-    people = 0
+    people = kitchen_people = 0
     n = 100
     for seed in range(n):
         world = generate(seed)
@@ -236,8 +236,10 @@ def test_small_objects_and_people_statistics():
             assert room["type"] == "kitchen" and o["position"][2] > 0.4
         for p in m["people"]:
             room = next(r for r in m["rooms"] if r["id"] == p["room"])
-            assert room["type"] != "kitchen"
+            assert room["type"] != "bathroom"
+            kitchen_people += room["type"] == "kitchen"
         people += len(m["people"])
     for cls, k in present.items():
         assert 0.5 * n <= k <= 0.9 * n, (cls, k)  # about 70 % present
-    assert people >= 0.8 * n
+    assert people == n  # every apartment has an operator
+    assert kitchen_people <= 0.1 * n  # the kitchen is the last resort

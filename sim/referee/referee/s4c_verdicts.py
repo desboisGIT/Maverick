@@ -166,6 +166,13 @@ def attribute_layers(
         add("agent decision")  # found it but never sent the photo
     if not checks.get("time", True) and not layers:
         add("skill failure")
+    if not layers:  # hygiene: a failure never goes unattributed
+        if not checks.get("collisions", True) or not checks.get("distance", True):
+            add("flight/collision")
+        elif not checks.get("photo", True) and present:
+            add("agent decision")
+        else:
+            add("agent decision" if not checks.get("answer", True) else "skill failure")
     return layers
 
 

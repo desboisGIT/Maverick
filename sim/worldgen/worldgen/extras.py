@@ -24,6 +24,7 @@ PRESENCE = 0.7
 SMALL_OBJECTS = ("banana", "bread")
 PERSON_ROOMS = ("living", "bedroom", "office")
 PERSON_HEIGHT = 1.75
+FALLBACK_LEVELS = ((0.9, 0.8), (0.75, 0.65), (0.6, 0.5), (0.45, 0.4), (0.4, 0.3))
 PERSON_SPAWN_MIN = 1.6  # m from the take-off point (come_to must have somewhere to fly)
 EDGE = 0.08  # keep the object this far from the surface edge
 MIN_SEPARATION = 0.4  # banana and bread
@@ -97,15 +98,34 @@ def place_person(
     prof: DroneProfile,
 ) -> Person | None:
     """A free standing spot in a living / bedroom / office, away from furniture, walls, doors
-    and the take-off point, so that the drone can hover 1.5 m from it."""
+    and the take-off point, so that the drone can hover 1.5 m from it. When no such room has a
+    spot (about 13 % of the tuning seeds 0-99 had no mannequin), the operator stands in
+    a hallway or, last, the kitchen, with the clearances relaxed and the spawn distance
+    lowered: a scenario that needs an operator always gets one. Seeds that had a spot before
+    get the same spot (the first pass is unchanged)."""
+    for rooms, levels, spawn_min in (
+        (PERSON_ROOMS, ((0.9, 0.8), (0.75, 0.65), (0.6, 0.5), (0.45, 0.4)), PERSON_SPAWN_MIN),
+        (PERSON_ROOMS, FALLBACK_LEVELS, 1.2),
+        (PERSON_ROOMS + ("hallway",), FALLBACK_LEVELS, 1.2),
+        (PERSON_ROOMS + ("hallway", "kitchen"), FALLBACK_LEVELS, 1.2),
+    ):
+        found = _person_spots(plan, openings, furniture, spawn, prof, rooms, levels, spawn_min)
+        if found:
+            room, x, y = rng.choice(found)
+            cx, cy = room.rect.center
+            return Person("person_0", room.id, x, y, round(math.atan2(cy - y, cx - x), 3))
+    return None
+
+
+def _person_spots(plan, openings, furniture, spawn, prof, rooms, levels, spawn_min):
     candidates: list[tuple[Room, float, float]] = []
     for room in plan.rooms:
-        if room.type not in PERSON_ROOMS:
+        if room.type not in rooms:
             continue
         solid = [p.rect for p in furniture if p.room == room.id and p.solid]
         zones = door_zones(room, openings, prof)
         # strict clearance first, then relax; every level needs the wall margin
-        for wall, furn in ((0.9, 0.8), (0.75, 0.65), (0.6, 0.5), (0.45, 0.4)):
+        for wall, furn in levels:
             area = room.rect.inset(wall + 0.05)
             if area.w < 0 or area.h < 0:
                 continue
@@ -118,18 +138,13 @@ def place_person(
                         continue
                     if any(body.inset(-0.3).intersects(z) for z in zones):
                         continue
-                    if math.hypot(x - spawn.x, y - spawn.y) < PERSON_SPAWN_MIN:
+                    if math.hypot(x - spawn.x, y - spawn.y) < spawn_min:
                         continue
                     spots.append((x, y))
             if spots:
                 candidates += [(room, x, y) for x, y in spots]
                 break
-    if not candidates:
-        return None
-    room, x, y = rng.choice(candidates)
-    cx, cy = room.rect.center
-    yaw = round(math.atan2(cy - y, cx - x), 3)
-    return Person("person_0", room.id, x, y, yaw)
+    return candidates
 
 
 def extras_manifest(small: list[SmallObject], people: list[Person]) -> dict[str, Any]:

@@ -30,6 +30,19 @@ EMERGENCY_RE = re.compile(r"\b(stop|land|abort)\b", re.IGNORECASE)
 APOLOGY = "Sorry, this is taking too long. I am stopping here."
 LOST_CONNECTION = "I lost my connection, so I am holding position."
 REFUSAL = "I can't do that one."
+_OBJECT_ID_RE = re.compile(r"object_id (\S+?)[,)\s]")
+_NEG_RE = re.compile(
+    r"\b(no|not|none|nothing|nope|never|without|cannot)\b|n't\b|\bcouldn\w*|\bdidn\w*", re.I
+)
+
+
+def says_found(text: str, label: str) -> bool:
+    """The model's sentence reports the object as found: starts with yes, or names the object
+    without a negation."""
+    if re.match(r"\W*(yes|yeah|yep)\b", text, re.I):
+        return True
+    stem = label.lower().replace("_", " ").rstrip("s")
+    return bool(stem) and stem in text.lower() and not _NEG_RE.search(text)
 
 
 @dataclass
@@ -106,6 +119,8 @@ class AgentLoop:
         self._plan_n = 0
         self._spoke = False
         self._n_user = 0
+        # evidence of the latest successful search: (object_id, label, photo already sent)
+        self._evidence: list | None = None
 
     # -- input from other threads ------------------------------------------------------------
     def submit(self, text: str) -> bool:
@@ -145,6 +160,7 @@ class AgentLoop:
         self.history.append({"role": "user", "content": text})
         self._plan_n += 1
         self._goal, self._plan, self._spoke = text, [], False
+        self._evidence = None
         self._publish_plan()
         t0 = self.clock()
         res = self._run(start)
@@ -262,9 +278,17 @@ class AgentLoop:
             elif name == "memory_query":
                 text, err = self.ex.memory_query(args["question"]), False
             elif name == "send_photo":
-                text, err = self.ex.send_photo(args["target"], args["caption"]), False
+                if self._evidence and args["target"] == self._evidence[0] and self._evidence[2]:
+                    text, err = f"photo of {args['target']} was already sent", False
+                else:
+                    text, err = self.ex.send_photo(args["target"], args["caption"]), False
+                    if self._evidence and args["target"] == self._evidence[0]:
+                        self._evidence[2] = True
             else:
                 text, err = self._run_skill(name, args)
+                if name == "search" and not err:
+                    m = _OBJECT_ID_RE.search(text)
+                    self._evidence = [m.group(1), str(args.get("object", "")), False] if m else None
         except Exception as exc:  # an executive failure must not kill the loop
             log.exception("tool %s failed", name)
             text, err = f"{name} failed: {exc}", True
@@ -322,6 +346,26 @@ class AgentLoop:
             self._spoke = True
         self.ex.say(text)
         self._emit("transcript", transcript_event("maverick", text))
+        if not template:
+            self._attach_evidence(text)
+
+    def _attach_evidence(self, text: str) -> None:
+        """The report says the object was found and the search left a photo of it: send it with
+        the report unless the model already did. The model decides what is reported; it does not
+        have to remember the photo."""
+        ev = self._evidence
+        if not ev or ev[2] or not says_found(text, ev[1]):
+            return
+        ev[2] = True
+        sid = f"auto-photo-{self._plan_n}"
+        self._plan.append({"id": sid, "label": step_label("send_photo", {}), "status": "running"})
+        self._publish_plan()
+        try:
+            note = self.ex.send_photo(ev[0], f"The {ev[1].replace('_', ' ')} I found")
+            self._set_step(sid, "done", note[:120])
+        except Exception as exc:  # no photo saved: the report stands without it
+            log.warning("evidence photo failed: %s", exc)
+            self._set_step(sid, "failed", str(exc)[:120])
 
     def _user_event(self, text: str) -> None:
         with self._lock:

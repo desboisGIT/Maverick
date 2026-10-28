@@ -224,3 +224,42 @@ def test_history_trimmed_at_utterance_boundaries():
         loop.handle(f"u{i}")
     users = [m for m in loop.history if m["role"] == "user"]
     assert loop.history[0]["role"] == "user" and len(users) <= 3
+
+
+FOUND = SkillResult("succeeded", "found the banana in the kitchen (object_id obj_7)")
+
+
+def _search_then_say(text, send_first=False):
+    first = [tu("search", {"object": "banana", "budget_s": 60}, "s1")]
+    mid = [tu("send_photo", {"target": "obj_7", "caption": "here"}, "p1")] if send_first else []
+    say = [tu("say", {"text": text}, "y1")]
+    return ListBackend(
+        [resp(first), *([resp(mid)] if mid else []), resp(say), resp([], "end_turn")]
+    )
+
+
+def test_report_that_bananas_were_found_attaches_the_photo_once():
+    ex = FakeExecutive({"search": FOUND})
+    loop, _, events = make(_search_then_say("Yes, there are bananas on the counter."), ex)
+    loop.handle("any bananas?")
+    assert [c[1] for c in ex.calls if c[0] == "photo"] == ["obj_7"]
+    steps = [d for t, d in events if t == "agent_step"][-1]["steps"]
+    assert any(s["label"] == "Send photo" and s["status"] == "done" for s in steps)
+
+
+def test_model_sent_photo_is_not_duplicated():
+    ex = FakeExecutive({"search": FOUND})
+    loop, _, _ = make(_search_then_say("Yes, bananas.", send_first=True), ex)
+    loop.handle("any bananas?")
+    assert len([c for c in ex.calls if c[0] == "photo"]) == 1
+
+
+def test_negative_report_sends_no_photo_and_no_search_hit_means_no_photo():
+    ex = FakeExecutive({"search": FOUND})
+    loop, _, _ = make(_search_then_say("I could not find any bananas."), ex)
+    loop.handle("any bananas?")
+    assert not [c for c in ex.calls if c[0] == "photo"]
+    ex2 = FakeExecutive({"search": SkillResult("succeeded", "not found, searched kitchen")})
+    loop2, _, _ = make(_search_then_say("Yes, bananas."), ex2)
+    loop2.handle("any bananas?")
+    assert not [c for c in ex2.calls if c[0] == "photo"]

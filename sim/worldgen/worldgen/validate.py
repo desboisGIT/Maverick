@@ -156,8 +156,8 @@ def validate(m: dict[str, Any], sdf: str | None = None) -> list[str]:
         (px0, py0, _), (px1, py1, _) = p["bbox"]
         pr = Rect(px0, py0, px1, py1)
         proom = by_id[p["room"]]
-        if proom.type == "kitchen":
-            errs.append(f"{p['id']} stands in the kitchen")
+        if proom.type in ("bathroom",):  # the kitchen is the last-resort room (extras.py)
+            errs.append(f"{p['id']} stands in the {proom.type}")
         if not proom.rect.inset(WALL_HALF).contains(pr, 1e-3):
             errs.append(f"{p['id']} intersects a wall")
         if any(pr.intersects(rects[f["id"]]) for f in solid):

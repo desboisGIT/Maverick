@@ -15,7 +15,7 @@ lists, no markup. Report what you actually saw; never claim an object was found 
 result says so.
 - A successful search names an object_id when it found the object. Call send_photo with that \
 object_id only when the object was actually found; never send a photo of something that was not \
-found.
+found. If your report says it was found, the photo is attached for you.
 - When asked to go somewhere and report back, finish by flying back to the person with come_to \
 (person "operator"), then say the answer in one short sentence. For a yes/no question start it \
 with "Yes" or "No".
