@@ -93,6 +93,15 @@ test-s3 *args:
 test-s4 *args:
     PYTHONPATH=sim/referee python3 -m referee.s4 {{args}}
 
+# S4c h2_text (mission by text through the agent), tuning seeds: `just test-s4c --seeds 10-19 --stacks 3 --backend scripted`
+test-s4c *args:
+    PYTHONPATH=sim/referee python3 -m referee.s4c {{args}}
+
+# S4c live: one stack with the agent for typed missions in the console (see docs/s4-plan.md),
+# e.g. `just live-s4 --seed 12` or `just live-s4 --seed 12 --stack 3 --backend scripted`
+live-s4 *args:
+    PYTHONPATH=sim/referee python3 -m referee.live {{args}}
+
 # Generate random apartment world(s) into sim/worlds/generated/, e.g. `just worldgen 7` or
 # `just worldgen 7 --count 5 --no-ceiling`
 worldgen seed="7" *args:

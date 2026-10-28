@@ -3,6 +3,7 @@
     ros2 launch maverick_gateway s3_host.launch.py                  # everything, ws on :8765
     ros2 launch maverick_gateway s3_host.launch.py flight:=false    # flight client run elsewhere
     ros2 launch maverick_gateway s3_host.launch.py port:=9000 altitude:=1.2 seed:=3
+    ros2 launch maverick_gateway s3_host.launch.py agent:=true agent_backend:=deepseek  # S4c
 
 Inputs are the /maverick/camera/* topics (S3 plan, Integration contract) and the flight
 client's /maverick/flight/status. The gateway needs no port besides `port`.
@@ -28,6 +29,13 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("port", default_value="8765"),
             DeclareLaunchArgument("altitude", default_value="1.2"),
             DeclareLaunchArgument("seed", default_value="0"),
+            DeclareLaunchArgument(
+                "agent", default_value="false"
+            ),  # S4c: agent_node + gateway agent mode
+            DeclareLaunchArgument("agent_backend", default_value="deepseek"),
+            DeclareLaunchArgument(
+                "agent_cap_eur", default_value="0"
+            ),  # estimated spend cap, 0 = none
             DeclareLaunchArgument("vo", default_value="true"),
             # arm only once PX4 fuses the external-vision position (mocap or vo localisation)
             DeclareLaunchArgument("require_ev", default_value="false"),
@@ -73,9 +81,23 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
             ),
             Node(
+                package="maverick_agent",
+                executable="agent_node",
+                condition=IfCondition(LC("agent")),
+                parameters=[
+                    {
+                        "agent.backend": ParameterValue(LC("agent_backend"), value_type=str),
+                        "agent.cap_eur": ParameterValue(LC("agent_cap_eur"), value_type=float),
+                    }
+                ],
+                output="screen",
+            ),
+            Node(
                 package="maverick_gateway",
                 executable="gateway",
-                parameters=[{"port": LC("port")}],
+                parameters=[
+                    {"port": LC("port"), "agent": ParameterValue(LC("agent"), value_type=bool)}
+                ],
                 output="screen",
             ),
         ]

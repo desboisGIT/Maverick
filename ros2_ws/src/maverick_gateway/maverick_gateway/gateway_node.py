@@ -13,7 +13,11 @@ Topics in
 Topics out
   /maverick/skill/request, /maverick/flight/mission ("land"), /maverick/map/voxels_request
 
-Parameters: host (0.0.0.0), port (8765), camera_max_hz (5.0), pose_max_hz (10.0), battery_pct
+Agent mode (parameter `agent`): text_command -> /maverick/operator/text, and the agent's
+transcript / agent_step events (/maverick/agent/event) are forwarded to the console.
+
+Parameters: agent (false), host (0.0.0.0), port (8765), camera_max_hz (5.0), pose_max_hz (10.0),
+battery_pct
 (100.0: placeholder, the simulation has no battery model), vram_total_gb (16.0), default_budget_s.
 """
 
@@ -46,11 +50,13 @@ from .protocol import (
     ChangeFilter,
     GatewayState,
     PoseTracker,
+    agent_event_frame,
     agent_step_data,
     camera_frame_data,
     check_skill_progress,
     detections_data,
     envelope,
+    operator_text_payload,
     parse_command,
     parse_nvidia_smi,
     status_data,
@@ -61,6 +67,8 @@ LATCHED = QoSProfile(
     depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL
 )
 RELIABLE = QoSProfile(depth=50, reliability=ReliabilityPolicy.RELIABLE)
+OPERATOR_TEXT = "/maverick/operator/text"
+AGENT_EVENT = "/maverick/agent/event"
 
 
 class GatewayNode(Node):
@@ -85,6 +93,9 @@ class GatewayNode(Node):
         self.vram = (0.0, self.vram_total)
         self.msg_n = 0
         self.got_voxels = False
+        # agent mode: typed text goes to the S4 agent (/maverick/operator/text) and the console
+        # shows what the agent publishes; otherwise the keyword parser below answers
+        self.agent_mode = bool(p("agent", False).value)
 
         self.ws = WebSocketServer(
             str(p("host", "0.0.0.0").value),
@@ -109,6 +120,9 @@ class GatewayNode(Node):
         self.create_subscription(String, T.SKILL_PROGRESS, self._on_progress, LATCHED)
         self.create_subscription(String, T.FLIGHT_STATUS, self._on_flight, 10)
         self.req_pub = self.create_publisher(String, T.SKILL_REQUEST, RELIABLE)
+        self.text_pub = self.create_publisher(String, OPERATOR_TEXT, RELIABLE)
+        if self.agent_mode:
+            self.create_subscription(String, AGENT_EVENT, self._on_agent_event, RELIABLE)
         self.mission_pub = self.create_publisher(String, T.FLIGHT_MISSION, 10)
         self.vox_req_pub = self.create_publisher(Empty, T.MAP_VOXELS_REQUEST, 10)
         self.create_timer(1.0, self._status_tick)
@@ -135,6 +149,12 @@ class GatewayNode(Node):
     def _text_command(self, text: str) -> None:
         if not text.strip():
             return
+        if self.agent_mode:
+            # the agent echoes the user message and answers; "land" also goes to the flight client
+            self.text_pub.publish(String(data=operator_text_payload(text.strip())))
+            if parse_command(text, self.default_budget).kind == "land":
+                self.mission_pub.publish(String(data="land"))
+            return
         cmd = parse_command(text, self.default_budget)
         self.msg_n += 1
         self._emit(
@@ -160,8 +180,13 @@ class GatewayNode(Node):
             frame = self.state.put(type_, data, t)
             self.ws.broadcast(frame)
 
+    def _on_agent_event(self, msg: String) -> None:
+        ev = agent_event_frame(msg.data)
+        if ev is not None:
+            self._emit(*ev)
+
     def _emit_agent_step(self) -> None:
-        if self.plan_id:
+        if self.plan_id and not self.agent_mode:
             self._emit(
                 "agent_step",
                 agent_step_data(
@@ -274,7 +299,12 @@ class GatewayNode(Node):
 
     def _status_tick(self) -> None:
         self._emit("status", status_data(self.flight, self.skill, self.vram, self.battery_pct))
-        if self.plan_id and self.skill is not None and self.skill.get("state") == "running":
+        if (
+            self.plan_id
+            and not self.agent_mode
+            and self.skill is not None
+            and self.skill.get("state") == "running"
+        ):
             self._emit_agent_step()  # elapsed_s ticks
 
 

@@ -113,7 +113,7 @@ services:
     cap_add: [NET_ADMIN]
     environment:
       <<: *maverick-env
-      MAVERICK_HOST_LAUNCH: "${MAVERICK_HOST_LAUNCH:-none}"   # "s3" starts the S3 host stack
+      MAVERICK_HOST_LAUNCH: "${MAVERICK_HOST_LAUNCH:-none}"   # "s3" starts the S3 host stack, "s4" adds the agent
       MAVERICK_LAUNCH_ARGS: "${MAVERICK_LAUNCH_ARGS:-}"
       WIFI_PREFIX: "${MAVERICK_WIFI_NET:-10.231.2}."
       MAVERICK_LOCALISATION: "${MAVERICK_LOCALISATION:-flow}"

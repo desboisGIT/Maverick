@@ -229,6 +229,28 @@ def agent_step_data(plan_id: str, goal: str, skill: dict | None, elapsed_s: floa
     return {"plan_id": plan_id, "goal": goal, "steps": [step]}
 
 
+AGENT_FORWARD = ("transcript", "agent_step")
+
+
+def agent_event_frame(raw: str) -> tuple[str, dict, float | None] | None:
+    """An agent_node envelope (`/maverick/agent/event`) -> (type, data, t) if the console should
+    get it. The agent also publishes log-only events (e.g. `mission_end`); those are dropped."""
+    try:
+        d = json.loads(raw)
+        typ, data = d["type"], d["data"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    if typ not in AGENT_FORWARD or not isinstance(data, dict):
+        return None
+    t = d.get("t")
+    return typ, data, float(t) if isinstance(t, int | float) else None
+
+
+def operator_text_payload(text: str, speaker: str | None = None) -> str:
+    """JSON for /maverick/operator/text (the agent's input)."""
+    return json.dumps({"text": text, **({"speaker": speaker} if speaker else {})})
+
+
 def detections_data(det: dict, frame_seq: int) -> dict:
     return {"frame_seq": frame_seq, "boxes": det.get("boxes", [])}
 
