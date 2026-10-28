@@ -65,13 +65,13 @@ def standoff_points(
     step_deg: float = 10.0,
 ) -> list[XY]:
     """Candidate stopping points on a ring around a person, best first. The ring is
-    `standoff` +- 0.1 m (never under `min_dist` + 0.1), every point must be free in the planner's
+    `standoff` +- 0.05 m (never under `min_dist` + 0.1), every point must be free in the planner's
     view (which keeps `min_dist` from people). With a map, points are ranked by clearance from
     obstacles (capped at 0.8 m), line of sight to the person, how close the radius is to
     `standoff` and how little of a detour from the robot's side it is."""
     base = math.atan2(robot[1] - person[1], robot[0] - person[0])
     n = int(round(360.0 / step_deg))
-    radii = sorted({max(standoff + d, min_dist + 0.1) for d in (-0.1, 0.0, 0.1)})
+    radii = sorted({max(standoff + d, min_dist + 0.1) for d in (-0.05, 0.0, 0.05)})
     scored: list[tuple[float, XY]] = []
     for r in radii:
         for k in range(n):
@@ -91,7 +91,7 @@ def standoff_points(
 class ComeToSkill(CompoundSkill):
     skill = "come_to"
 
-    def __init__(self, cfg: SkillConfig, now: float, person: str, standoff_m: float = 1.3) -> None:
+    def __init__(self, cfg: SkillConfig, now: float, person: str, standoff_m: float = 1.25) -> None:
         super().__init__(cfg, now)
         self.person = person
         self.standoff = max(float(standoff_m), cfg.min_person_m)
@@ -144,10 +144,19 @@ class ComeToSkill(CompoundSkill):
                 return self.finish_with("failed", "I do not know where the person is", ctx)
             p = max(people, key=lambda o: (o.get("last_seen", 0.0), o.get("confidence", 0.0)))
             self.target = (float(p["position"][0]), float(p["position"][1]))
-            free = free_checker(ctx, self.cfg)
-            self.cands = standoff_points(
-                self.target, robot, free, self.standoff, self.cfg.min_person_m, ctx.grid
-            )
+            self.cands = []
+            # the ring first; when it is all blocked, a wider ring (up to +0.2 m, the referee's
+            # 1.5 m bound is the limit), then the same with the relaxed squeeze radius
+            for tight in (None, self.cfg.planner.tight_fallbacks[-1]):
+                free = free_checker(ctx, self.cfg, tight)
+                for extra in (0.0, 0.1, 0.2):
+                    pts = standoff_points(
+                        self.target, robot, free, self.standoff + extra,
+                        self.cfg.min_person_m, ctx.grid,
+                    )  # fmt: skip
+                    self.cands += [q for q in pts if q not in self.cands]
+                if self.cands:
+                    break
             self.pick = self.cands[0] if self.cands else None
             self.ev(ctx, "person", at=[round(v, 2) for v in self.target], n_cands=len(self.cands))
             if not self._next_candidate(ctx):

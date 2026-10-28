@@ -227,7 +227,7 @@ def test_come_to_stops_at_the_standoff_and_faces_the_person():
     out = w.run(s)
     assert s.result == "succeeded"
     d = math.dist(w.xy, (6.0, 6.0))
-    assert 1.15 <= d <= 1.45
+    assert 1.15 <= d <= 1.4
     want = math.atan2(6.0 - w.xy[1], 6.0 - w.xy[0])
     assert abs(math.atan2(math.sin(w.yaw - want), math.cos(w.yaw - want))) < 0.05
     assert result(out)["distance_m"] >= 1.0
@@ -236,8 +236,8 @@ def test_come_to_stops_at_the_standoff_and_faces_the_person():
 def test_ring_points_stay_on_the_ring_and_never_under_one_metre():
     pts = standoff_points((5.0, 5.0), (1.0, 1.0), lambda p: True, 0.5, min_dist=1.0)
     assert pts and all(math.dist(p, (5.0, 5.0)) >= 1.1 - 1e-9 for p in pts)
-    pts = standoff_points((5.0, 5.0), (1.0, 1.0), lambda p: True, 1.3, 1.0)
-    assert all(1.2 - 1e-9 <= math.dist(p, (5.0, 5.0)) <= 1.4 + 1e-9 for p in pts)
+    pts = standoff_points((5.0, 5.0), (1.0, 1.0), lambda p: True, 1.25, 1.0)
+    assert all(1.2 - 1e-9 <= math.dist(p, (5.0, 5.0)) <= 1.3 + 1e-9 for p in pts)
     assert math.dist(pts[0], (1.0, 1.0)) <= min(math.dist(p, (1.0, 1.0)) for p in pts) + 0.4
 
 

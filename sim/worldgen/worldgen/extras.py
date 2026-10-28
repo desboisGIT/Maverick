@@ -103,13 +103,20 @@ def place_person(
     a hallway or, last, the kitchen, with the clearances relaxed and the spawn distance
     lowered: a scenario that needs an operator always gets one. Seeds that had a spot before
     get the same spot (the first pass is unchanged)."""
-    for rooms, levels, spawn_min in (
-        (PERSON_ROOMS, ((0.9, 0.8), (0.75, 0.65), (0.6, 0.5), (0.45, 0.4)), PERSON_SPAWN_MIN),
-        (PERSON_ROOMS, FALLBACK_LEVELS, 1.2),
-        (PERSON_ROOMS + ("hallway",), FALLBACK_LEVELS, 1.2),
-        (PERSON_ROOMS + ("hallway", "kitchen"), FALLBACK_LEVELS, 1.2),
+    strict = ((0.9, 0.8), (0.75, 0.65), (0.6, 0.5), (0.45, 0.4))
+    # a person must not stand next to a door (the keep-out of 1.0 m would close the passage and the
+    # drone could not leave the room): doors at least 2.2 m away first, then 1.8, then no rule
+    for rooms, levels, spawn_min, door_min in (
+        (PERSON_ROOMS, strict, PERSON_SPAWN_MIN, 2.2),
+        (PERSON_ROOMS, strict, PERSON_SPAWN_MIN, 1.8),
+        (PERSON_ROOMS, strict, PERSON_SPAWN_MIN, 0.0),
+        (PERSON_ROOMS, FALLBACK_LEVELS, 1.2, 1.8),
+        (PERSON_ROOMS + ("hallway",), FALLBACK_LEVELS, 1.2, 1.8),
+        (PERSON_ROOMS + ("hallway", "kitchen"), FALLBACK_LEVELS, 1.2, 0.0),
     ):
-        found = _person_spots(plan, openings, furniture, spawn, prof, rooms, levels, spawn_min)
+        found = _person_spots(
+            plan, openings, furniture, spawn, prof, rooms, levels, spawn_min, door_min
+        )
         if found:
             room, x, y = rng.choice(found)
             cx, cy = room.rect.center
@@ -117,7 +124,7 @@ def place_person(
     return None
 
 
-def _person_spots(plan, openings, furniture, spawn, prof, rooms, levels, spawn_min):
+def _person_spots(plan, openings, furniture, spawn, prof, rooms, levels, spawn_min, door_min):
     candidates: list[tuple[Room, float, float]] = []
     for room in plan.rooms:
         if room.type not in rooms:
@@ -139,6 +146,10 @@ def _person_spots(plan, openings, furniture, spawn, prof, rooms, levels, spawn_m
                     if any(body.inset(-0.3).intersects(z) for z in zones):
                         continue
                     if math.hypot(x - spawn.x, y - spawn.y) < spawn_min:
+                        continue
+                    if any(
+                        math.hypot(x - o.center[0], y - o.center[1]) < door_min for o in openings
+                    ):
                         continue
                     spots.append((x, y))
             if spots:

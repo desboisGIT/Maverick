@@ -59,9 +59,9 @@ class PlannerConfig:
     vp_window: int = 5  # cells: how far from a frontier cell a viewpoint may be (was 4)
     # People (from the detector via memory, never ground truth) are obstacles of their own: no
     # path or viewpoint within `person_hard_m` of one, a cost that grows from `person_soft_m` in.
-    person_hard_m: float = 1.0
-    person_soft_m: float = 1.5
-    person_weight: float = 8.0
+    person_hard_m: float = 1.1  # the executive's limit is 1.0 m; the extra 0.1 m is tracking margin
+    person_soft_m: float = 1.7
+    person_weight: float = 16.0
     person_escape_m: float = 0.5  # unblocked around the robot so it can leave a too-close spot
 
 

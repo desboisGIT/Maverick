@@ -134,6 +134,7 @@ class SearchSkill(CompoundSkill):
         self.room_i = -1
         self.room: dict | None = None
         self.searched: list[str] = []
+        self.unreachable: list[str] = []  # rooms the drone could not get to
         self.views: list[tuple[XY, float]] = []
         self.hits: list[tuple[int, float, float, float, float]] = []  # frame, x, y, z, conf
         self.n_frames = 0
@@ -193,6 +194,12 @@ class SearchSkill(CompoundSkill):
 
     def _not_found(self, ctx: Ctx, why: str) -> Out:
         seen = ", ".join(room_name(t) for t in self.searched) or "nowhere"
+        if self.unreachable:
+            gone = ", ".join(room_name(t) for t in self.unreachable)
+            if not self.searched:  # nothing was looked at: not a "not found" but a failure to go
+                res = {"found": False, "object": self.label, "unreachable": self.unreachable}
+                return self.finish_with("failed", f"I could not get to the {gone}", ctx, res)
+            seen += f"; I could not get to the {gone}"
         res = {
             "found": False,
             "object": self.label,
@@ -336,7 +343,8 @@ class SearchSkill(CompoundSkill):
                 return out
             if st == "failed":
                 self.ev(ctx, "room_unreachable", id=self.room["id"])
-                self._room_done()
+                if self.room["type"] not in self.unreachable:
+                    self.unreachable.append(self.room["type"])
                 if not self._next_room(ctx):
                     return self._not_found(ctx, "rooms exhausted")
                 return out

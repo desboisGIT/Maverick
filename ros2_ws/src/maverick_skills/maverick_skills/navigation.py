@@ -81,10 +81,12 @@ class CompoundSkill(_Base):
         return self.finish(state, message, ctx, hold=True)
 
 
-def free_checker(ctx: Ctx, cfg: SkillConfig):
-    """`free(xy) -> bool`: the point is free in the planner's inflated view of the map."""
+def free_checker(ctx: Ctx, cfg: SkillConfig, tight: float | None = None):
+    """`free(xy) -> bool`: the point is free in the planner's inflated view of the map (with the
+    squeeze radius `tight` instead of the default, to accept a spot beside furniture)."""
     grid, res, org = ctx.grid
-    pg = PlanningGrid.build(grid, res, org, cfg.planner, ctx.robot_xy, None, ctx.people)
+    pc = cfg.planner if tight is None else dataclasses.replace(cfg.planner, tight_radius=tight)
+    pg = PlanningGrid.build(grid, res, org, pc, ctx.robot_xy, None, ctx.people)
 
     def free(xy: XY) -> bool:
         i, j = pg.to_cell(xy)

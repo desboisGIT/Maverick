@@ -26,7 +26,7 @@ def make_extra_skill(req: dict, cfg: SkillConfig, now: float) -> _Base:
         who = str(req.get("person", "")).strip()
         if not who:
             raise ValueError("come_to needs person")
-        return ComeToSkill(cfg, now, who, float(req.get("standoff_m", 1.3)))
+        return ComeToSkill(cfg, now, who, float(req.get("standoff_m", 1.25)))
     if kind == "return":
         home = req.get("home_xy")
         if not home:

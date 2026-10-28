@@ -125,12 +125,12 @@ def test_people_are_hard_obstacles_within_a_metre_and_soft_to_one_and_a_half():
     person = (4.0, 4.0)
     pg = PlanningGrid.build(g, RES, (0.0, 0.0), cfg, None, None, [person])
     free = PlanningGrid.build(g, RES, (0.0, 0.0), cfg)
-    for r, hard in ((0.9, True), (1.05, False), (1.6, False)):
+    for r, hard in ((1.05, True), (1.15, False), (1.8, False)):
         i, j = pg.to_cell((person[0] + r, person[1]))
         assert bool(pg.blocked[i, j]) == hard
     i, j = pg.to_cell((person[0] + 1.25, person[1]))
     assert pg.cost[i, j] > free.cost[i, j] + 1.0  # soft cost
-    i, j = pg.to_cell((person[0] + 1.6, person[1]))
+    i, j = pg.to_cell((person[0] + 1.8, person[1]))
     assert pg.cost[i, j] == free.cost[i, j]
 
 
