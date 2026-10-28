@@ -148,7 +148,7 @@ class ComeToSkill(CompoundSkill):
             # the ring first; when it is all blocked, a wider ring (up to +0.2 m, the referee's
             # 1.5 m bound is the limit), then the same with the relaxed squeeze radius
             for tight in (None, self.cfg.planner.tight_fallbacks[-1]):
-                free = free_checker(ctx, self.cfg, tight)
+                free = free_checker(ctx, self.cfg, tight, reachable=True)
                 for extra in (0.0, 0.1, 0.2):
                     pts = standoff_points(
                         self.target, robot, free, self.standoff + extra,

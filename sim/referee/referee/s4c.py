@@ -170,6 +170,11 @@ def run_h2(stack: Stack, world: dict, out: Path, i: int, args) -> dict:
         )
         rec["setup_come_to"] = prog.get("state")
         if prog.get("state") != "succeeded":
+            try:
+                ev = stack.exec("host", "cat /tmp/skill_events.jsonl", timeout=30)
+                (run_dir / "skill_events.jsonl").write_text(ev.stdout)
+            except Exception:  # noqa: BLE001
+                pass
             raise RunError(f"setup failed: come_to {prog.get('state')}: {prog.get('message')}")
         if not wait_for(
             lambda: "agent_node" in stack.exec("host", "ros2 node list", timeout=30).stdout, 30, 2.0

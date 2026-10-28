@@ -10,7 +10,8 @@ from __future__ import annotations
 import dataclasses
 import math
 
-from maverick_mapping.planner import PlanningGrid
+import numpy as np
+from maverick_mapping.planner import PlanningGrid, dijkstra_all
 
 from .skills import XY, Ctx, GotoRoomSkill, Out, SkillConfig, _Base
 
@@ -81,15 +82,22 @@ class CompoundSkill(_Base):
         return self.finish(state, message, ctx, hold=True)
 
 
-def free_checker(ctx: Ctx, cfg: SkillConfig, tight: float | None = None):
+def free_checker(ctx: Ctx, cfg: SkillConfig, tight: float | None = None, reachable: bool = False):
     """`free(xy) -> bool`: the point is free in the planner's inflated view of the map (with the
-    squeeze radius `tight` instead of the default, to accept a spot beside furniture)."""
+    squeeze radius `tight` instead of the default, to accept a spot beside furniture). With
+    `reachable`, it must also be reachable from the robot without a squeeze-only passage."""
     grid, res, org = ctx.grid
     pc = cfg.planner if tight is None else dataclasses.replace(cfg.planner, tight_radius=tight)
     pg = PlanningGrid.build(grid, res, org, pc, ctx.robot_xy, None, ctx.people)
+    dist = None
+    if reachable:
+        start = pg.to_cell(ctx.robot_xy)
+        dist = dijkstra_all(pg, start)
 
     def free(xy: XY) -> bool:
         i, j = pg.to_cell(xy)
-        return bool(pg.free_at(i, j))
+        if not pg.free_at(i, j):
+            return False
+        return dist is None or bool(np.isfinite(dist[i, j]))
 
     return free

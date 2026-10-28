@@ -514,11 +514,17 @@ class GotoRoomSkill(_Base):
         grid, res, org = ctx.grid
         cells = pg = b = None
         tiers = [
-            (tr, None) for tr in (self.cfg.planner.tight_radius, *self.cfg.planner.tight_fallbacks)
+            (tr, None, None)
+            for tr in (self.cfg.planner.tight_radius, *self.cfg.planner.tight_fallbacks)
         ]
-        tiers.append((self.cfg.planner.tight_fallbacks[-1], ctx.trail))  # + the flown track
-        for tr, trail in tiers:
+        tiers.append((self.cfg.planner.tight_fallbacks[-1], ctx.trail, None))  # + the flown track
+        # last resort: only the executive's limit (1.0 m) around people instead of the margin
+        last = self.cfg.planner.tight_fallbacks[-1]
+        tiers += [(last, None, self.cfg.min_person_m), (last, ctx.trail, self.cfg.min_person_m)]
+        for tr, trail, ph in tiers:
             pc = dataclasses.replace(self.cfg.planner, tight_radius=tr)
+            if ph is not None:
+                pc = dataclasses.replace(pc, person_hard_m=ph)
             pg = PlanningGrid.build(grid, res, org, pc, ctx.robot_xy, trail, ctx.people)
             a = pg.to_cell(ctx.robot_xy)
             b = snap_free(pg, self.goal_xy, 0.6)
@@ -526,7 +532,7 @@ class GotoRoomSkill(_Base):
                 continue
             cells = astar(pg, a, b)
             if cells is not None:
-                if tr != self.cfg.planner.tight_radius or trail:
+                if tr != self.cfg.planner.tight_radius or trail or ph is not None:
                     self.ev(ctx, "tight_fallback", tight=tr, trail=trail is not None)
                 break
         if cells is None:
