@@ -223,23 +223,53 @@ PERSON = {"id": "obj_2", "position": [6.0, 6.0, 0.9], "confidence": 0.9, "last_s
 def test_come_to_stops_at_the_standoff_and_faces_the_person():
     w = World(start=(1.5, 1.5))
     w.people = [PERSON]
-    s = ComeToSkill(SkillConfig(), 0.0, "operator", 1.5)
+    s = ComeToSkill(SkillConfig(), 0.0, "operator")
     out = w.run(s)
     assert s.result == "succeeded"
     d = math.dist(w.xy, (6.0, 6.0))
-    assert 1.3 <= d <= 1.8  # the standoff, less the arrival tolerance
+    assert 1.15 <= d <= 1.45
     want = math.atan2(6.0 - w.xy[1], 6.0 - w.xy[0])
     assert abs(math.atan2(math.sin(w.yaw - want), math.cos(w.yaw - want))) < 0.05
     assert result(out)["distance_m"] >= 1.0
 
 
-def test_come_to_never_plans_a_point_closer_than_one_metre():
+def test_ring_points_stay_on_the_ring_and_never_under_one_metre():
     pts = standoff_points((5.0, 5.0), (1.0, 1.0), lambda p: True, 0.5, min_dist=1.0)
-    assert pts and all(math.dist(p, (5.0, 5.0)) >= 1.0 - 1e-9 for p in pts)
-    near = standoff_points((5.0, 5.0), (1.0, 1.0), lambda p: True, 1.5, 1.0)
-    assert (
-        math.dist(near[0], (1.0, 1.0)) <= min(math.dist(p, (1.0, 1.0)) for p in near) + 0.2
-    )  # robot side first
+    assert pts and all(math.dist(p, (5.0, 5.0)) >= 1.1 - 1e-9 for p in pts)
+    pts = standoff_points((5.0, 5.0), (1.0, 1.0), lambda p: True, 1.3, 1.0)
+    assert all(1.2 - 1e-9 <= math.dist(p, (5.0, 5.0)) <= 1.4 + 1e-9 for p in pts)
+    assert math.dist(pts[0], (1.0, 1.0)) <= min(math.dist(p, (1.0, 1.0)) for p in pts) + 0.4
+
+
+def test_ring_prefers_clearance_and_line_of_sight_near_a_wall():
+    g = room_grid()  # walls at x = 0.5..0.7 and 8.3..8.5
+    person = (1.9, 4.0)  # 1.2 m from the west wall's face
+    gt = (g, RES, (0.0, 0.0))
+    from maverick_skills.come_to import clearance_at, line_of_sight
+
+    pts = standoff_points(person, (6.0, 4.0), lambda p: True, 1.3, 1.0, gt)
+    assert pts[0][0] > person[0]  # the open side, not the wall side
+    assert clearance_at(gt, pts[0]) >= 0.8
+    # a wall segment between the point and the person blocks the view
+    g2 = g.copy()
+    g2[30:34, 38:42] = 100
+    assert not line_of_sight((g2, RES, (0.0, 0.0)), (4.5, 4.0), (2.0, 4.0))
+    assert line_of_sight(gt, (4.5, 4.0), (2.0, 4.0))
+
+
+def test_ring_point_is_a_free_cell_even_when_the_person_stands_by_furniture():
+    g = room_grid()
+    g[40:55, 54:62] = 100  # a cupboard east of the person
+    person = (5.0, 5.0)
+    gt = (g, RES, (0.0, 0.0))
+
+    def free(p):
+        i, j = int(p[0] / RES), int(p[1] / RES)
+        return not (g[max(i - 5, 0) : i + 6, max(j - 5, 0) : j + 6] == 100).any()
+
+    pts = standoff_points(person, (1.5, 5.0), free, 1.3, 1.0, gt)
+    assert pts and all(free(p) for p in pts)
+    assert pts[0][0] < person[0]  # the side away from the cupboard
 
 
 def test_come_to_fails_when_the_person_is_unknown():

@@ -57,6 +57,12 @@ class PlannerConfig:
     # clearance levels 0.3 / 0.4 / 0.5 m it falls within of an obstacle or unobserved cell)
     vp_clear_weight: float = 1.0
     vp_window: int = 5  # cells: how far from a frontier cell a viewpoint may be (was 4)
+    # People (from the detector via memory, never ground truth) are obstacles of their own: no
+    # path or viewpoint within `person_hard_m` of one, a cost that grows from `person_soft_m` in.
+    person_hard_m: float = 1.0
+    person_soft_m: float = 1.5
+    person_weight: float = 8.0
+    person_escape_m: float = 0.5  # unblocked around the robot so it can leave a too-close spot
 
 
 def disk_offsets(radius_cells: float) -> list[tuple[int, int]]:
@@ -87,7 +93,7 @@ def _narrow(occ: np.ndarray, max_span_cells: float) -> np.ndarray:
         o = np.moveaxis(occ, axis, 0)
         n = o.shape[0]
         idx = np.arange(n).reshape(-1, *([1] * (o.ndim - 1)))
-        prev = np.maximum.accumulate(np.where(o, idx, -10**6), axis=0)
+        prev = np.maximum.accumulate(np.where(o, idx, -(10**6)), axis=0)
         later = np.flip(np.where(o, idx, 10**6), axis=0)
         nxt = np.flip(np.minimum.accumulate(later, axis=0), axis=0)
         span = nxt - prev
@@ -123,12 +129,14 @@ class PlanningGrid:
         cfg: PlannerConfig,
         start_xy: tuple[float, float] | None = None,
         trail: list[tuple[float, float]] | None = None,
+        people: list[tuple[float, float]] | None = None,
     ) -> PlanningGrid:
         if start_xy is not None:
             # the robot is physically here: cells around it that no ray crossed (the camera sits
             # ahead of the body, so the cells behind the lens may never be observed) are free
-            si, sj = int(math.floor((start_xy[0] - origin[0]) / res)), int(
-                math.floor((start_xy[1] - origin[1]) / res)
+            si, sj = (
+                int(math.floor((start_xy[0] - origin[0]) / res)),
+                int(math.floor((start_xy[1] - origin[1]) / res)),
             )
             if 0 <= si < grid.shape[0] and 0 <= sj < grid.shape[1]:
                 near = np.zeros(grid.shape, bool)
@@ -173,6 +181,12 @@ class PlanningGrid:
             los = los & ~tm
             squeeze = squeeze & ~tm
             cost = np.where(tm, np.minimum(cost, 1.0 + cfg.squeeze_cost), cost)
+        if people:
+            pb, pc = person_masks(grid.shape, res, origin, people, cfg, start_xy)
+            blocked = blocked | pb
+            los = los | pb
+            squeeze = squeeze & ~pb
+            cost = cost + pc
         pg = PlanningGrid(blocked, los, cost, res, origin, squeeze)
         pg.near = dilate(occ, (r_hard + cfg.careful_m) / res) | dilate(
             unk, (cfg.unknown_radius + cfg.careful_m) / res
@@ -212,6 +226,24 @@ class PlanningGrid:
     def free_at(self, i: int, j: int) -> bool:
         n0, n1 = self.blocked.shape
         return 0 <= i < n0 and 0 <= j < n1 and not self.blocked[i, j]
+
+
+def person_masks(shape, res, origin, people, cfg, start_xy=None):
+    """(hard, soft_cost) arrays of the keep-out around people: cells whose centre is within
+    `person_hard_m` of one are blocked (except within `person_escape_m` of the robot, so it can
+    leave), cells up to `person_soft_m` get a cost growing towards the person."""
+    ii, jj = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), indexing="ij")
+    x = origin[0] + (ii + 0.5) * res
+    y = origin[1] + (jj + 0.5) * res
+    d = np.full(shape, np.inf)
+    for px, py in people:
+        d = np.minimum(d, np.hypot(x - px, y - py))
+    hard = d < cfg.person_hard_m
+    if start_xy is not None:
+        hard &= np.hypot(x - start_xy[0], y - start_xy[1]) > cfg.person_escape_m
+    width = max(cfg.person_soft_m - cfg.person_hard_m, 1e-6)
+    soft = cfg.person_weight * np.clip((cfg.person_soft_m - d) / width, 0.0, 1.0)
+    return hard, soft
 
 
 def _padded(pg: PlanningGrid):
@@ -411,6 +443,7 @@ class ExplorationPlanner:
         self.goal_centroid: tuple[float, float] | None = None
         self.failed: list[tuple[float, float]] = []
         self.failed_vp: list[tuple[float, float]] = []
+        self.people: list[tuple[float, float]] = []  # set by plan()
 
     def mark_viewpoint_failed(self, xy: tuple[float, float]) -> None:
         """Never choose a viewpoint within 0.5 m of xy again (arrived, frontier still there)."""
@@ -447,7 +480,9 @@ class ExplorationPlanner:
         res: float,
         origin: tuple[float, float],
         robot_xy: tuple[float, float],
+        people: list[tuple[float, float]] | None = None,
     ) -> PlanResult:
+        self.people = list(people or [])
         out = self._plan(grid, res, origin, robot_xy, self.cfg)
         if self.cfg.tight_radius is not None:
             for tr in self.cfg.tight_fallbacks:
@@ -481,7 +516,7 @@ class ExplorationPlanner:
         )
         if not fronts:
             return PlanResult("done", "no frontier left")
-        pg = PlanningGrid.build(grid, res, origin, cfg, robot_xy)
+        pg = PlanningGrid.build(grid, res, origin, cfg, robot_xy, None, self.people)
         start = pg.to_cell(robot_xy)
         dist_all = dijkstra_all(pg, start)
         # viewpoints: never in a squeeze (door) nor in the escape zone around the robot

@@ -117,3 +117,51 @@ def test_flown_trail_opens_a_door_the_fat_map_blocks():
     trail = [(x / 10.0, 2.0) for x in range(10, 71)]
     pg2 = PlanningGrid.build(g, RES, (0.0, 0.0), PlannerConfig(tight_radius=0.40), None, trail)
     assert astar(pg2, (10, 20), (70, 20)) is not None
+
+
+def test_people_are_hard_obstacles_within_a_metre_and_soft_to_one_and_a_half():
+    g = np.full((80, 80), FREE, np.int8)
+    cfg = PlannerConfig()
+    person = (4.0, 4.0)
+    pg = PlanningGrid.build(g, RES, (0.0, 0.0), cfg, None, None, [person])
+    free = PlanningGrid.build(g, RES, (0.0, 0.0), cfg)
+    for r, hard in ((0.9, True), (1.05, False), (1.6, False)):
+        i, j = pg.to_cell((person[0] + r, person[1]))
+        assert bool(pg.blocked[i, j]) == hard
+    i, j = pg.to_cell((person[0] + 1.25, person[1]))
+    assert pg.cost[i, j] > free.cost[i, j] + 1.0  # soft cost
+    i, j = pg.to_cell((person[0] + 1.6, person[1]))
+    assert pg.cost[i, j] == free.cost[i, j]
+
+
+def test_path_detours_around_a_person_and_the_robot_can_leave_a_too_close_spot():
+    g = np.full((80, 80), FREE, np.int8)
+    cfg = PlannerConfig()
+    person = (4.0, 4.0)
+    pg = PlanningGrid.build(g, RES, (0.0, 0.0), cfg, (1.0, 4.0), None, [person])
+    cells = astar(pg, pg.to_cell((1.0, 4.0)), pg.to_cell((7.0, 4.0)))
+    assert cells is not None
+    assert min(math.dist(pg.to_xy(c), person) for c in cells) >= 1.0
+    pts, _ = shorten_ex(pg, cells, (1.0, 4.0), cfg.squeeze_pad_m)
+    for a, b in zip(pts, pts[1:], strict=False):  # the string-pulled path too
+        for k in range(21):
+            p = (a[0] + (b[0] - a[0]) * k / 20, a[1] + (b[1] - a[1]) * k / 20)
+            assert math.dist(p, person) >= 0.95
+    near = (4.0 + 0.8, 4.0)  # robot 0.8 m from the person
+    pg2 = PlanningGrid.build(g, RES, (0.0, 0.0), cfg, near, None, [person])
+    assert pg2.free_at(*pg2.to_cell(near))
+    out = astar(pg2, pg2.to_cell(near), pg2.to_cell((6.5, 4.0)))
+    assert out is not None
+
+
+def test_explore_viewpoints_keep_out_of_the_person_radius():
+    g = np.full((80, 80), UNKNOWN, np.int8)
+    g[10:70, 10:70] = FREE
+    g[9, 9:71] = g[70, 9:71] = g[9:71, 9] = g[9:71, 70] = OCCUPIED
+    g[40:70, 25:70] = UNKNOWN
+    pl = ExplorationPlanner()
+    people = [(5.5, 3.0)]
+    r = pl.plan(g, RES, (0.0, 0.0), (2.0, 2.0), people)
+    assert r.status == "goal"
+    for wp in r.waypoints:
+        assert math.dist(wp[:2], people[0]) >= 0.95

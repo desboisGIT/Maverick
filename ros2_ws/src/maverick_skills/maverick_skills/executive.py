@@ -50,7 +50,7 @@ class Limits:
     default_search_budget_s: float = 120.0
     default_explore_budget_s: float = 360.0
     min_person_m: float = 1.0  # never closer than this to a person (hard)
-    default_standoff_m: float = 1.25  # the drone ends 0.1-0.3 m off: stay inside 1.0 - 1.5
+    default_standoff_m: float = 1.3  # ring 1.2-1.4 m, final tolerance 0.1 m: inside 1.0 - 1.5
     max_standoff_m: float = 6.0
 
 
@@ -214,10 +214,21 @@ class Executive:
     # -- run-time guard ----------------------------------------------------------------------
     def goal_violation(self, goal: XY, view: WorldView) -> str | None:
         """Reason a flight goal must not be sent (closer than min_person_m to a person)."""
+        m = self.limits.min_person_m
         for p in view.people:
-            if math.dist(goal, p) < self.limits.min_person_m:
-                return (
-                    f"goal is {math.dist(goal, p):.2f} m from a person; "
-                    f"never closer than {self.limits.min_person_m:g} m"
-                )
+            if math.dist(goal, p) < m:
+                return f"goal is {math.dist(goal, p):.2f} m from a person; never under {m:g} m"
+            r = view.robot_xy
+            if r is not None:
+                d = _seg_dist(r, goal, p)
+                if d < m - 0.05 and d < math.dist(r, p) - 0.02:  # passes, nearer than now
+                    return f"the leg to the goal passes {d:.2f} m from a person (limit {m:g} m)"
         return None
+
+
+def _seg_dist(a: XY, b: XY, p: XY) -> float:
+    """Distance from point p to the segment a-b."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L2 = dx * dx + dy * dy
+    t = 0.0 if L2 < 1e-12 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2))
+    return math.hypot(a[0] + t * dx - p[0], a[1] + t * dy - p[1])

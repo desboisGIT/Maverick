@@ -1,5 +1,7 @@
 """The executive's validation: every unsafe or invalid request is rejected with a reason."""
 
+import dataclasses
+
 import pytest
 from maverick_skills.executive import Executive, WorldView
 
@@ -132,7 +134,7 @@ def test_valid_requests_are_accepted_and_normalised():
     assert d.accepted and d.request["budget_s"] == ex.limits.default_search_budget_s
     ex.finished()
     d = ex.submit({"skill": "come_to", "person": "operator"}, KNOWN)
-    assert d.accepted and d.request["standoff_m"] == 1.25
+    assert d.accepted and d.request["standoff_m"] == 1.3
     ex.finished()
     d = ex.submit({"skill": "come_to", "person": "operator", "standoff_m": 1.0}, KNOWN)
     assert d.accepted  # exactly 1.0 m is the limit
@@ -162,9 +164,26 @@ def test_one_motion_skill_at_a_time_and_cancel_always_works():
     assert ex.submit({"skill": "goto_room", "room_type": "kitchen"}, KNOWN).accepted
 
 
+NOROBOT = dataclasses.replace(KNOWN, robot_xy=None)
+
+
 def test_goal_guard_keeps_one_metre_from_people():
     ex = Executive()
-    assert ex.goal_violation((3.0, 2.9), KNOWN) is not None  # 0.9 m from the person at (3, 2)
-    assert ex.goal_violation((3.0, 2.0), KNOWN) is not None
-    assert ex.goal_violation((3.0, 3.05), KNOWN) is None  # 1.05 m
+    assert ex.goal_violation((3.0, 2.9), NOROBOT) is not None  # 0.9 m from the person at (3, 2)
+    assert ex.goal_violation((3.0, 2.0), NOROBOT) is not None
+    assert ex.goal_violation((3.0, 3.05), NOROBOT) is None  # 1.05 m
     assert ex.goal_violation((3.0, 2.5), EMPTY) is None  # nobody known
+
+
+def test_goal_guard_refuses_a_leg_that_passes_within_a_metre_of_a_person():
+    from maverick_skills.executive import Executive, WorldView
+
+    ex = Executive()
+    view = WorldView(frozenset(), [(3.0, 0.2)], (0.0, 0.0), (0.0, 0.0))
+    assert ex.goal_violation((6.0, 0.0), view) is not None  # straight past the person
+    assert ex.goal_violation((6.0, 3.0), view) is None  # passes at about 2 m
+    assert ex.goal_violation((3.0, 3.0), view) is None
+    assert ex.goal_violation((3.0, 0.5), view) is not None  # goal inside the radius
+    # leaving: robot at 0.8 m, the leg moves away
+    leave = WorldView(frozenset(), [(3.0, 0.2)], (2.2, 0.2), (0.0, 0.0))
+    assert ex.goal_violation((0.0, 0.2), leave) is None

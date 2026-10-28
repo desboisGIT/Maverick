@@ -64,7 +64,6 @@ class SkillConfig:
     search_look_s: float = 1.2  # pause at each yaw of a surface viewpoint
     search_standoff: float = 1.3  # viewpoint distance from a surface's face, m
     search_person_avoid_m: float = 1.2  # no search viewpoint closer than this to a person
-    person_clear_m: float = 1.15  # planner paths (goto, search, return) keep this far from people
     min_person_m: float = 1.0  # never closer than this to a person (executive guard)
     come_to_tolerance: float = 0.2
     return_tolerance: float = 0.25
@@ -321,7 +320,7 @@ class ExploreSkill(_Base):
 
     def _run(self, ctx: Ctx):
         grid, res, org = ctx.grid
-        return self.planner.plan(grid, res, org, ctx.robot_xy)
+        return self.planner.plan(grid, res, org, ctx.robot_xy, ctx.people)
 
     def _adopt(self, plan, ctx: Ctx, out: Out) -> None:
         self.goal = plan.goal
@@ -520,7 +519,7 @@ class GotoRoomSkill(_Base):
         tiers.append((self.cfg.planner.tight_fallbacks[-1], ctx.trail))  # + the flown track
         for tr, trail in tiers:
             pc = dataclasses.replace(self.cfg.planner, tight_radius=tr)
-            pg = PlanningGrid.build(grid, res, org, pc, ctx.robot_xy, trail)
+            pg = PlanningGrid.build(grid, res, org, pc, ctx.robot_xy, trail, ctx.people)
             a = pg.to_cell(ctx.robot_xy)
             b = snap_free(pg, self.goal_xy, 0.6)
             if b is None or not pg.free_at(*a):
