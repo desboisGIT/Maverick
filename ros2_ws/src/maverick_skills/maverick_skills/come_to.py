@@ -91,7 +91,7 @@ def standoff_points(
 class ComeToSkill(CompoundSkill):
     skill = "come_to"
 
-    def __init__(self, cfg: SkillConfig, now: float, person: str, standoff_m: float = 1.3) -> None:
+    def __init__(self, cfg: SkillConfig, now: float, person: str, standoff_m: float = 1.25) -> None:
         super().__init__(cfg, now)
         self.person = person
         self.standoff = max(float(standoff_m), cfg.min_person_m)
@@ -145,11 +145,11 @@ class ComeToSkill(CompoundSkill):
             p = max(people, key=lambda o: (o.get("last_seen", 0.0), o.get("confidence", 0.0)))
             self.target = (float(p["position"][0]), float(p["position"][1]))
             self.cands = []
-            # the ring first; when it is all blocked, a wider ring (up to +0.2 m, the referee's
+            # the ring first; when it is all blocked, a wider ring (up to +0.1 m, the referee's
             # 1.5 m bound is the limit), then the same with the relaxed squeeze radius
             for tight in (None, self.cfg.planner.tight_fallbacks[-1]):
                 free = free_checker(ctx, self.cfg, tight, reachable=True)
-                for extra in (0.0, 0.1, 0.2):
+                for extra in (0.0, 0.1):
                     pts = standoff_points(
                         self.target, robot, free, self.standoff + extra,
                         self.cfg.min_person_m, ctx.grid,
