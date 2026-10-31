@@ -50,7 +50,7 @@ class Limits:
     default_search_budget_s: float = 120.0
     default_explore_budget_s: float = 360.0
     min_person_m: float = 1.0  # never closer than this to a person (hard)
-    default_standoff_m: float = 1.25  # ring 1.2-1.3 m, final tolerance 0.1 m: inside 1.0 - 1.5
+    default_standoff_m: float = 1.3  # ring 1.25-1.35 m, final tolerance 0.1 m: inside 1.0 - 1.5
     max_standoff_m: float = 6.0
 
 

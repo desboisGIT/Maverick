@@ -134,7 +134,7 @@ def test_valid_requests_are_accepted_and_normalised():
     assert d.accepted and d.request["budget_s"] == ex.limits.default_search_budget_s
     ex.finished()
     d = ex.submit({"skill": "come_to", "person": "operator"}, KNOWN)
-    assert d.accepted and d.request["standoff_m"] == 1.25
+    assert d.accepted and d.request["standoff_m"] == 1.3
     ex.finished()
     d = ex.submit({"skill": "come_to", "person": "operator", "standoff_m": 1.0}, KNOWN)
     assert d.accepted  # exactly 1.0 m is the limit

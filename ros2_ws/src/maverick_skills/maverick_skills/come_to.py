@@ -21,7 +21,7 @@ from .skills import XY, Ctx, Out, SkillConfig
 
 FACE_TOL_RAD = 0.2
 FACE_TIMEOUT_S = 6.0
-FIX_TOL_M = 0.12  # an arrival further than this from the ring radius is corrected
+FIX_TOL_M = 0.1  # an arrival further than this from the ring radius is corrected
 
 
 def clearance_at(grid_t, xy: XY, cap: float = 1.0) -> float:
@@ -91,7 +91,7 @@ def standoff_points(
 class ComeToSkill(CompoundSkill):
     skill = "come_to"
 
-    def __init__(self, cfg: SkillConfig, now: float, person: str, standoff_m: float = 1.25) -> None:
+    def __init__(self, cfg: SkillConfig, now: float, person: str, standoff_m: float = 1.3) -> None:
         super().__init__(cfg, now)
         self.person = person
         self.standoff = max(float(standoff_m), cfg.min_person_m)
@@ -177,7 +177,8 @@ class ComeToSkill(CompoundSkill):
                     return self.finish_with("failed", "I could not get near the person", ctx)
                 return out
             d = math.dist(robot, self.target)
-            if abs(d - self.standoff) > FIX_TOL_M and self.n_fix < 2 and self.pick is not None:
+            want_d = math.dist(self.pick, self.target) if self.pick else self.standoff
+            if abs(d - want_d) > FIX_TOL_M and self.n_fix < 3 and self.pick is not None:
                 self.n_fix += 1  # closed loop: the arrival was off the ring, go there again
                 self.start_leg(ctx, self.pick, "the person", self.cfg.come_to_tolerance / 2)
                 self.ev(ctx, "fix", dist=round(d, 2), n=self.n_fix)
@@ -191,6 +192,13 @@ class ComeToSkill(CompoundSkill):
             err = abs(wrap(ctx.robot_yaw - want)) if ctx.robot_yaw is not None else 0.0
             if err < FACE_TOL_RAD or ctx.now - self.t_face > FACE_TIMEOUT_S:
                 d = math.dist(robot, self.target)
+                if self.pick is not None and self.n_fix < 3:
+                    if abs(d - math.dist(self.pick, self.target)) > FIX_TOL_M + 0.05:
+                        self.n_fix += 1  # drifted while turning: go back to the ring point
+                        self.start_leg(ctx, self.pick, "the person", self.cfg.come_to_tolerance / 2)
+                        self.ev(ctx, "fix", dist=round(d, 2), n=self.n_fix, after="face")
+                        self.state = "fly"
+                        return out
                 res = {"person_xy": [round(v, 3) for v in self.target], "distance_m": round(d, 2)}
                 return self.finish_with("succeeded", f"I am {d:.1f} m from the person", ctx, res)
         return out

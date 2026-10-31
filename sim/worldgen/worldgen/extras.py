@@ -110,6 +110,8 @@ def place_person(
         (PERSON_ROOMS, strict, PERSON_SPAWN_MIN, 2.2),
         (PERSON_ROOMS, strict, PERSON_SPAWN_MIN, 1.8),
         (PERSON_ROOMS, strict, PERSON_SPAWN_MIN, 0.0),
+        (PERSON_ROOMS, FALLBACK_LEVELS, PERSON_SPAWN_MIN, 1.8),
+        (PERSON_ROOMS, FALLBACK_LEVELS, PERSON_SPAWN_MIN, 0.0),
         (PERSON_ROOMS, FALLBACK_LEVELS, 1.2, 1.8),
         (PERSON_ROOMS + ("hallway",), FALLBACK_LEVELS, 1.2, 1.8),
         (PERSON_ROOMS + ("hallway", "kitchen"), FALLBACK_LEVELS, 1.2, 0.0),
