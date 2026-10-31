@@ -74,6 +74,7 @@ services:
       PX4_PARAM_UXRCE_DDS_AG_IP: "${MAVERICK_XRCE_AGENT_IP_INT:-182911235}"
       CAMERA_BRIDGE_ADDR: "${MAVERICK_DRONE_NET:-10.231.1}.3"   # camera and mocap drivers -> bridge
       CAMERA_DRIVER: "${CAMERA_DRIVER:-1}"   # 0: no camera streaming, so Gazebo does not render (much faster, S1 tests)
+      MAVERICK_CAMERA_HZ: "${MAVERICK_CAMERA_HZ:-10}"   # forward camera rate; tests use 10, `just live-s4` raises it
     deploy:
       resources:
         reservations:

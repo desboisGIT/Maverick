@@ -84,6 +84,32 @@ if [ -n "${PX4_GZ_WORLDS:-}" ]; then
     sed -i "s|^export PX4_GZ_WORLDS=.*|export PX4_GZ_WORLDS=$PX4_GZ_WORLDS|" gz_env.sh
     echo "[entrypoint] world ${PX4_GZ_WORLD:-default} from $PX4_GZ_WORLDS, model pose '${PX4_GZ_MODEL_POSE:-}'"
 fi
+# Live demos only: MAVERICK_CAMERA_HZ (default 10, what every test uses) sets the rate of the
+# drone's rgb/depth/semantic cameras. The model folders are mounted read-only and PX4 includes
+# ${PX4_GZ_MODELS}/<model>/model.sdf, so build a models folder of symlinks with patched copies
+# of the Maverick models and point gz_env.sh at it.
+CAMERA_HZ="${MAVERICK_CAMERA_HZ:-10}"
+if [ "$CAMERA_HZ" != 10 ]; then
+    LIVE_MODELS=/tmp/maverick_models
+    ORIG_MODELS=$(sed -n 's|^export PX4_GZ_MODELS=||p' gz_env.sh)
+    rm -rf "$LIVE_MODELS" && mkdir -p "$LIVE_MODELS"
+    for d in "$ORIG_MODELS"/*; do ln -s "$d" "$LIVE_MODELS/$(basename "$d")"; done
+    for m in maverick maverick_small; do
+        rm "$LIVE_MODELS/$m" && cp -r "$ORIG_MODELS/$m" "$LIVE_MODELS/$m"
+        # Only the three forward cameras run at 10 Hz in the model; flow, IMU etc. are untouched.
+        python3 - "$LIVE_MODELS/$m/model.sdf" "$CAMERA_HZ" <<'PY'
+import re, sys
+path, hz = sys.argv[1], sys.argv[2]
+s = open(path).read()
+def bump(m):
+    return re.sub(r"<update_rate>[^<]*</update_rate>", f"<update_rate>{hz}</update_rate>", m.group(0), count=1)
+s = re.sub(r"<sensor name='(?:rgb|depth|semantic)'.*?</sensor>", bump, s, flags=re.S)
+open(path, "w").write(s)
+PY
+    done
+    sed -i "s|^export PX4_GZ_MODELS=.*|export PX4_GZ_MODELS=$LIVE_MODELS|" gz_env.sh
+    echo "[entrypoint] live camera rate ${CAMERA_HZ} Hz (models from $LIVE_MODELS)"
+fi
 stdbuf -oL -eL "$PX4_BUILD/bin/px4" -d </dev/null > >(tee -a "$PX4_LOG") 2>&1 &
 PX4_PID=$!
 

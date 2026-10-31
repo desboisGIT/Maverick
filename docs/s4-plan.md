@@ -121,7 +121,7 @@ First dev run (seed 10) with stand-off 1.5 m ended 1.59 m away, so the default b
 
 **Run it live** (owner)
 1. `just ws-build` (once, and after code changes). Keys: `docker/.env.secrets` (DeepSeek; without it the agent is scripted).
-2. `just live-s4 --seed 12` starts stack 0 with apartment 12, DeepSeek agent (estimated spend cap EUR 0.50), and prints the URLs. `--stack 3` uses stack 3 instead (gateway port 8765 + stack index); `--backend scripted` needs no key. `just down` stops it (`MAVERICK_STACK=3 just down` for stack 3).
+2. `just live-s4 --seed 12` (options: `--camera-hz 15`, the default for demos, raises the drone camera from the tests' 10 Hz and lifts the console cap from 5 fps; `--gui` also opens the Gazebo window) starts stack 0 with apartment 12, DeepSeek agent (estimated spend cap EUR 0.50), and prints the URLs. `--stack 3` uses stack 3 instead (gateway port 8765 + stack index); `--backend scripted` needs no key. `just down` stops it (`MAVERICK_STACK=3 just down` for stack 3).
 3. Console: start the node image as in `console/README.md` (`docker run ... node:22 npx vite --host 0.0.0.0 --port 5173`, without the mock), open `http://localhost:5173/?gateway=ws://localhost:8765` (port 8768 for stack 3).
 4. The drone takes off alone. Type "explore the flat" and wait for the map, then "come to me", then the H2 request above. The conversation, the plan steps and the photo card appear in the console. "stop" / "land" bypass the model.
 

@@ -14,6 +14,7 @@ mission. Nothing here runs a scenario: no referee, no verdicts.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 
 from referee.s3 import LOCALISATIONS, configure_stack, make_world
@@ -28,13 +29,25 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--backend", choices=("scripted", "deepseek", "claude"), default="deepseek")
     ap.add_argument("--cap-eur", type=float, default=0.5, help="agent spend cap (estimate)")
     ap.add_argument("--localisation", choices=LOCALISATIONS, default="mocap")
+    ap.add_argument(
+        "--camera-hz",
+        type=float,
+        default=15.0,
+        help="drone camera rate and console cap for the demo (tests always use 10 Hz / 5 fps)",
+    )
+    ap.add_argument("--gui", action="store_true", help="also open the Gazebo window (X11)")
     args = ap.parse_args(argv)
     stack = Stack(index=args.stack)
     world = make_world(args.seed, extras=True)
     configure_stack(stack, world, "s4", args.localisation)
     stack.env["MAVERICK_LAUNCH_ARGS"] = (
         f"agent_backend:={args.backend} agent_cap_eur:={args.cap_eur:.3f}"
+        f" camera_max_hz:={2 * args.camera_hz:g}"  # cap above the rate: no jitter drops
     )
+    stack.env["MAVERICK_CAMERA_HZ"] = f"{args.camera_hz:g}"
+    if args.gui:
+        subprocess.run(["xhost", "+local:docker"], capture_output=True, check=False)
+        stack.env["HEADLESS"] = "0"
     stack.restart()
     port = gateway_port(args.stack)
     people = world["manifest"].get("people") or []

@@ -27,6 +27,8 @@ def generate_launch_description() -> LaunchDescription:
         [
             DeclareLaunchArgument("flight", default_value="true"),
             DeclareLaunchArgument("port", default_value="8765"),
+            # Console camera rate cap; tests keep 5, `just live-s4` raises it for demos.
+            DeclareLaunchArgument("camera_max_hz", default_value="5.0"),
             DeclareLaunchArgument("altitude", default_value="1.2"),
             DeclareLaunchArgument("seed", default_value="0"),
             DeclareLaunchArgument(
@@ -96,7 +98,11 @@ def generate_launch_description() -> LaunchDescription:
                 package="maverick_gateway",
                 executable="gateway",
                 parameters=[
-                    {"port": LC("port"), "agent": ParameterValue(LC("agent"), value_type=bool)}
+                    {
+                        "port": LC("port"),
+                        "agent": ParameterValue(LC("agent"), value_type=bool),
+                        "camera_max_hz": ParameterValue(LC("camera_max_hz"), value_type=float),
+                    }
                 ],
                 output="screen",
             ),
