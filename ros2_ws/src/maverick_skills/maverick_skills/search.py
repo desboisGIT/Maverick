@@ -262,6 +262,17 @@ class SearchSkill(CompoundSkill):
                 (s["lo"][0], s["lo"][1]), (s["hi"][0], s["hi"][1]), free, self.cfg.search_standoff
             )
         self.views = order_nearest(pts, ctx.robot_xy, ctx.people, self.cfg.search_person_avoid_m)
+        # earlier sightings of the object (too weak to count) are looked at first, from close by
+        first: list[tuple[XY, float]] = []
+        for c in self.room.get("candidates", []):
+            x, y = float(c["position"][0]), float(c["position"][1])
+            first += surface_viewpoints(
+                (x - 0.15, y - 0.15), (x + 0.15, y + 0.15), free, self.cfg.search_standoff
+            )
+        first = order_nearest(first, ctx.robot_xy, ctx.people, self.cfg.search_person_avoid_m)
+        self.views = first[:3] + [
+            v for v in self.views if all(math.dist(v[0], f[0]) > 0.5 for f in first[:3])
+        ]
         pts_log = [[round(p[0][0], 2), round(p[0][1], 2)] for p in self.views]
         self.ev(ctx, "views", n=len(self.views), pts=pts_log)
         self.state = "views"

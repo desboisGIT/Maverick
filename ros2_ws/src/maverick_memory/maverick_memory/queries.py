@@ -81,12 +81,22 @@ def search_plan(sg: SceneGraph, label: str, region, start) -> dict:
             for o in sg.objects_in(r.id)
             if o.label in SEARCH_SURFACES
         ]
+        cands = [
+            {
+                "id": o.id,
+                "position": [round(float(v), 3) for v in o.position[:3]],
+                "confidence": round(float(o.confidence), 3),
+            }
+            for o in sg.objects_in(r.id, confirmed_only=False)
+            if o.label == label
+        ]
         out.append(
             {
                 "id": r.id,
                 "type": r.type,
                 "goal": [round(goal[0], 3), round(goal[1], 3)],
                 "surfaces": surfaces,
+                "candidates": cands,  # earlier, unconfirmed sightings of the class: look first
                 "known": r.id in seen_in,
             }
         )

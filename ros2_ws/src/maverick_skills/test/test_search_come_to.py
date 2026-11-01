@@ -299,3 +299,18 @@ def test_make_skill_builds_the_new_skills():
         except ValueError:
             continue
         raise AssertionError(bad)
+
+
+def test_search_looks_first_at_an_earlier_weak_sighting_in_memory():
+    # a banana 3.4 m from the room goal on no known surface: only memory's weak sighting leads there
+    room = {**ROOM, "surfaces": [], "candidates": [{"id": "obj_3", "position": [5.3, 4.0, 0.95]}]}
+    w = World(items=[("banana", 5.3, 4.0, 0.95)], view_range=1.9)
+    w.answer_plan = room
+    orig = w.answer
+    w.answer = lambda q: (
+        {"id": q["id"], "ok": True, "rooms": [room]} if q["query"] == "search_plan" else orig(q)
+    )
+    s = SearchSkill(SkillConfig(), 0.0, "banana", "kitchen", 300)
+    out = w.run(s)
+    assert result(out)["found"] is True
+    assert any(e["ev"] == "views" and e["n"] >= 1 for e in s.events)
