@@ -147,8 +147,11 @@ class ComeToSkill(CompoundSkill):
             self.cands = []
             # the ring first; when it is all blocked, a wider ring (up to +0.1 m, the referee's
             # 1.5 m bound is the limit), then the same with the relaxed squeeze radius
-            for tight in (None, self.cfg.planner.tight_fallbacks[-1]):
-                free = free_checker(ctx, self.cfg, tight, reachable=True)
+            relaxed = self.cfg.planner.tight_fallbacks[-1]
+            # reachable points first; when the map cuts the drone off (it ends an explore wedged
+            # beside furniture), any free point: the leg planner can use the drone's own track
+            for tight, reach in ((None, True), (relaxed, True), (None, False), (relaxed, False)):
+                free = free_checker(ctx, self.cfg, tight, reachable=reach)
                 for extra in (0.0, 0.1):
                     pts = standoff_points(
                         self.target, robot, free, self.standoff + extra,
