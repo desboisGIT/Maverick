@@ -93,6 +93,11 @@ test-s3 *args:
 test-s4 *args:
     PYTHONPATH=sim/referee python3 -m referee.s4 {{args}}
 
+# kinsim: fast kinematic simulator (real stack modules, no Gazebo) for tuning and screening; never an
+# S3/S4 result (docs/kinsim.md). e.g. `just kinsim --scenario explore --seeds 20-79 --jobs 12`
+kinsim *args:
+    {{compose}} --profile tools run --rm -T tools bash -lc "cd /maverick && PYTHONPATH=sim/kinsim python3 -m kinsim {{args}}"
+
 # S4c h2_text (mission by text through the agent), tuning seeds: `just test-s4c --seeds 10-19 --stacks 3 --backend scripted`
 test-s4c *args:
     PYTHONPATH=sim/referee python3 -m referee.s4c {{args}}
