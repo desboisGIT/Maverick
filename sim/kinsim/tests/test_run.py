@@ -21,7 +21,7 @@ def two_runs():
 
 def test_deterministic_per_seed_and_run(two_runs):
     a, b = two_runs
-    for k in ("duration_s", "pid"):
+    for k in ("duration_s", "cpu_s", "pid"):
         a.pop(k, None)
         b.pop(k, None)
     for r in (a, b):

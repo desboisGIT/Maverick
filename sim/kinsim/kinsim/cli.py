@@ -89,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scenario", choices=SCENARIOS, required=True)
     ap.add_argument("--seeds", required=True, help="comma list / ranges, e.g. 20-79 or 1,5,9-12")
     ap.add_argument("--runs-per-seed", type=int, default=1)
+    ap.add_argument("--first-run", type=int, default=0, help="run index of the first repeat")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--budget", type=float, default=360.0, help="explore / search budget, s")
@@ -113,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     out = a.out or Path("runs") / f"kinsim-{a.scenario}-{time.strftime('%Y%m%d-%H%M%S')}"
     out.mkdir(parents=True, exist_ok=True)
     kw = {"budget": a.budget, "room": a.room, "object": a.object, "map_stride": a.map_stride}
-    jobs = [(a.scenario, s, r, a.params, kw) for r in range(a.runs_per_seed) for s in seeds]
+    runs = range(a.first_run, a.first_run + a.runs_per_seed)
+    jobs = [(a.scenario, s, r, a.params, kw) for r in runs for s in seeds]
     t0 = time.time()
     rows: list[dict] = []
     res_path = out / "results.jsonl"
