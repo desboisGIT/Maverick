@@ -118,3 +118,5 @@ Start with the [host-stack guide](docs/s3-host-stack.md), [agent plan](docs/s4-p
 ## License
 
 [MIT](LICENSE).
+
+Development uses AI-assisted tooling. The maintainers are responsible for reviewing the code and validating its behavior.
