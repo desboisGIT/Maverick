@@ -1,6 +1,9 @@
 <div align="center">
 
-![Maverick — language meets spatial autonomy](assets/banner.svg)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="assets/banner-light.svg" />
+  <img src="assets/banner.svg" alt="Maverick — Give it a mission. See how it reasons." width="100%" />
+</picture>
 
 # Maverick
 
