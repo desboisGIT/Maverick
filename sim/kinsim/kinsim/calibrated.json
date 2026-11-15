@@ -1,0 +1,39 @@
+{
+  "vehicle": {
+    "kp_xy": 0.9248547306472018,
+    "kv_xy": 1.2575684508128984,
+    "v_max": 0.8458427636713284,
+    "a_max": 2.702967644042291,
+    "tau_a": 0.0995702778972186,
+    "kp_z": 1.0,
+    "v_up": 1.0,
+    "v_dn": 0.7,
+    "tau_z": 0.15,
+    "kp_yaw": 2.8,
+    "yaw_rate_max": 2.0943951023931953,
+    "tau_w": 0.1,
+    "contact_radius": 0.1502,
+    "restitution": 0.2,
+    "contact_friction": 0.5,
+    "est_delay_s": 0.0,
+    "est_sigma_m": 0.026,
+    "est_tau_s": 1.0,
+    "est_yaw_sigma": 0.003,
+    "pose_lead_s": 0.025,
+    "map_latency_s": 0.1,
+    "frame_jitter_s": 0.02,
+    "start_z": 2.0,
+    "dist_sigma_acc": 0.09,
+    "dist_tau_s": 0.5,
+    "crash_prob": 0.15,
+    "crash_bias_m": [
+      0.3,
+      0.9
+    ],
+    "crash_decay_s": 60.0,
+    "contact_jitter": 0.0012
+  },
+  "map_stride": 4,
+  "snapshot_period_s": 34.0,
+  "start_delay_s": 0.0
+}
